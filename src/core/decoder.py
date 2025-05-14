@@ -3,6 +3,7 @@ import src.core.protocol_config as pc
 import src.core.matrix_layout as ml
 import src.core.image_utils as iu
 import src.core.data_processing as dp
+import numpy as np
 
 def estimate_image_parameters(image: Image.Image) -> int:
     """
@@ -224,6 +225,49 @@ def extract_payload_stream(bit_matrix: list[list[str]]) -> str:
                          f"ne correspond pas à la longueur attendue de l'espace DATA_ECC ({expected_payload_bits}).")
 
     return payload_stream
+
+def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
+    """
+    Détecte les 3 Finder Patterns (FP) dans l'image.
+    Retourne la liste des centres (x, y) en pixels des FP détectés.
+    Méthode simple :
+      - Convertit en niveaux de gris, seuillage binaire.
+      - Cherche les 3 plus grands carrés noirs/blancs (motif FP) par analyse de blocs.
+      - Retourne les centres (x, y) en pixels.
+    Limité : ne gère pas la perspective ni le bruit fort, mais robuste aux rotations multiples de 90°.
+    """
+    # Convertir en niveaux de gris
+    gray = image.convert('L')
+    arr = np.array(gray)
+    # Seuillage binaire (Otsu ou simple)
+    thresh = arr.mean()
+    binary = (arr < thresh).astype(np.uint8)  # 1 = noir, 0 = blanc
+    # Chercher les plus grands carrés noirs (FP core)
+    from scipy.ndimage import label, find_objects
+    labeled, num = label(binary)
+    objects = find_objects(labeled)
+    # Filtrer les gros carrés (taille > 5% de l'image)
+    h, w = arr.shape
+    min_size = min(h, w) * 0.12  # typiquement ~7/35
+    candidates = []
+    for i, sl in enumerate(objects):
+        if sl is None:
+            continue
+        y0, y1 = sl[0].start, sl[0].stop
+        x0, x1 = sl[1].start, sl[1].stop
+        if (y1 - y0) >= min_size and (x1 - x0) >= min_size:
+            # Vérifier la compacité (carré)
+            if abs((y1 - y0) - (x1 - x0)) < min_size * 0.5:
+                # Calculer le centre
+                cx = (x0 + x1) // 2
+                cy = (y0 + y1) // 2
+                candidates.append(((cx, cy), (x1 - x0) * (y1 - y0)))
+    # Garder les 3 plus grands
+    candidates.sort(key=lambda tup: -tup[1])
+    centers = [c[0] for c in candidates[:3]]
+    if len(centers) != 3:
+        raise RuntimeError(f"Finder Patterns non détectés correctement (trouvés: {len(centers)}).")
+    return centers
 
 # --- Main Decoding Orchestration (Phase 6/7) ---
 
