@@ -110,7 +110,7 @@ PROTOCOL_VERSIONS = {
             'protection_bits': 36,
             # 'logo_enabled_bit': 36,  # Exemple d'extension
         },
-        'LOGO_CONFIG': LOGO_CONFIG.copy(),
+        'LOGO_CONFIG': copy.deepcopy(LOGO_CONFIG),
         'ECC_SYMBOL_SIZE_BITS': ECC_SYMBOL_SIZE_BITS,
         'DEFAULT_CELL_PIXEL_SIZE': 10
     },
@@ -141,7 +141,7 @@ PROTOCOL_VERSIONS = {
             'protection_bits': 64,
             # 'logo_enabled_bit': 64,
         },
-        'LOGO_CONFIG': LOGO_CONFIG.copy(),
+        'LOGO_CONFIG': copy.deepcopy(LOGO_CONFIG),
         'ECC_SYMBOL_SIZE_BITS': ECC_SYMBOL_SIZE_BITS,
         'DEFAULT_CELL_PIXEL_SIZE': 10
     }

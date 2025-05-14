@@ -1,5 +1,6 @@
 import random
 import src.core.protocol_config as pc
+from typing import Tuple, Optional
 
 # --- ECC Reed-Solomon (V2) ---
 try:
@@ -78,13 +79,14 @@ def format_metadata_bits(
     protocol_version: int, 
     ecc_level_code: int, # Par exemple, un code simple pour le % d'ECC (0-15 si 4 bits)
     message_encrypted_len: int, # Longueur en bits du message après cryptage
-    xor_key_actual_bits: str     # La chaîne de bits de la clé XOR réellement utilisée
-    ) -> str:
+    xor_key_actual_bits: str,     # La chaîne de bits de la clé XOR réellement utilisée
+    metadata_cfg: dict = None
+) -> str:
     """
-    Assemble les bits de métadonnées selon METADATA_CONFIG.
+    Assemble les bits de métadonnées selon METADATA_CONFIG (or provided config).
     Gère la protection des métadonnées (répétition des bits d'info pour atteindre total_bits).
     """
-    cfg = pc.METADATA_CONFIG
+    cfg = metadata_cfg or pc.METADATA_CONFIG
     
     # Convertir les entrées en chaînes de bits avec la bonne longueur
     version_b = format(protocol_version, f'0{cfg["version_bits"]}b')
@@ -138,13 +140,13 @@ def format_metadata_bits(
 
 # --- Functions for Phase 6: Decoder - Interpretation and Data Recovery ---
 
-def parse_metadata_bits(metadata_stream: str) -> dict:
+def parse_metadata_bits(metadata_stream: str, metadata_cfg: dict = None) -> dict:
     """
     Parses the metadata stream to extract protocol version, ECC level, 
     message length, and XOR key.
     Verifies metadata protection (simple repetition).
     """
-    cfg = pc.METADATA_CONFIG
+    cfg = metadata_cfg or pc.METADATA_CONFIG
     expected_total_bits = cfg['total_bits']
 
     if len(metadata_stream) != expected_total_bits:
@@ -262,13 +264,12 @@ def calculate_reed_solomon_ecc(data_bits: str, num_ecc_symbols: int, symbol_size
         raise ImportError("Le module 'reedsolo' n'est pas installé. Installez-le avec 'pip install reedsolo'.")
     if symbol_size_bits != 8:
         raise NotImplementedError("Seuls les symboles de 8 bits sont supportés pour l'instant.")
-    # Découper data_bits en octets
-    data_bytes = []
-    for i in range(0, len(data_bits), 8):
-        byte_str = data_bits[i:i+8]
-        if len(byte_str) < 8:
-            byte_str = byte_str.ljust(8, '0')
-        data_bytes.append(int(byte_str, 2))
+    # Validate input bits
+    if set(data_bits) - {'0', '1'}:
+        raise ValueError("data_bits must consist only of '0' and '1'")
+    # Découper data_bits en octets (plus lisible et rapide)
+    padded_bits = data_bits.ljust((len(data_bits) + 7) // 8 * 8, '0')
+    data_bytes = [int(padded_bits[i:i+8], 2) for i in range(0, len(padded_bits), 8)]
     max_msg = 255 - num_ecc_symbols
     if len(data_bytes) > max_msg:
         raise ValueError(f"Data too long: {len(data_bytes)} bytes (max {max_msg}) for RS({max_msg}+{num_ecc_symbols}, {max_msg})")
@@ -281,7 +282,7 @@ def calculate_reed_solomon_ecc(data_bits: str, num_ecc_symbols: int, symbol_size
     return ''.join(format(b, '08b') for b in ecc_bytes)
 
 
-def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symbols: int, symbol_size_bits: int = 8) -> (bool, str):
+def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symbols: int, symbol_size_bits: int = 8) -> Tuple[bool, Optional[str]]:
     """
     Vérifie et corrige (si possible) les erreurs dans message_plus_ecc_bits (data+ecc).
     - message_plus_ecc_bits : bits concaténés (data + ecc)
@@ -299,13 +300,12 @@ def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symb
         raise ImportError("Le module 'reedsolo' n'est pas installé. Installez-le avec 'pip install reedsolo'.")
     if symbol_size_bits != 8:
         raise NotImplementedError("Seuls les symboles de 8 bits sont supportés pour l'instant.")
+    # Validate input bits
+    if set(message_plus_ecc_bits) - {'0', '1'}:
+        raise ValueError("message_plus_ecc_bits must consist only of '0' and '1'")
     # Découper en octets
-    total_bytes = []
-    for i in range(0, len(message_plus_ecc_bits), 8):
-        byte_str = message_plus_ecc_bits[i:i+8]
-        if len(byte_str) < 8:
-            byte_str = byte_str.ljust(8, '0')
-        total_bytes.append(int(byte_str, 2))
+    padded_bits = message_plus_ecc_bits.ljust((len(message_plus_ecc_bits) + 7) // 8 * 8, '0')
+    total_bytes = [int(padded_bits[i:i+8], 2) for i in range(0, len(padded_bits), 8)]
     if len(total_bytes) > 255:
         raise ValueError(f"Message trop long pour Reed-Solomon (max 255 octets, reçu {len(total_bytes)})")
     try:
@@ -319,14 +319,15 @@ def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symb
     except reedsolo.ReedSolomonError:
         return False, None
 
-def padded_bits_to_text(data_bits: str, original_bit_length: int = None) -> str:
+def padded_bits_to_text(data_bits: str, *, original_bit_length: int) -> str:
     """
     Convertit une chaîne de bits (padded UTF-8) en texte.
-    - Si original_bit_length est fourni, tronque data_bits à cette longueur avant conversion (recommandé pour éviter de supprimer des \x00 valides).
-    - Sinon, supprime les octets nuls finaux (comportement historique, peut tronquer des messages valides se terminant par \x00).
+    - original_bit_length est obligatoire pour éviter toute perte de données.
+    - Si original_bit_length n'est pas un multiple de 8, une ValueError est levée (aucune troncature silencieuse).
     """
-    if original_bit_length is not None:
-        data_bits = data_bits[:original_bit_length]
+    if original_bit_length % 8 != 0:
+        raise ValueError(f"original_bit_length ({original_bit_length}) is not a multiple of 8. This would cause silent truncation of bits.")
+    data_bits = data_bits[:original_bit_length]
     byte_list = []
     for i in range(0, len(data_bits), 8):
         byte_str = data_bits[i : i + 8]
@@ -338,7 +339,4 @@ def padded_bits_to_text(data_bits: str, original_bit_length: int = None) -> str:
         text = byte_array.decode('utf-8', errors='strict')
     except UnicodeDecodeError as e:
         raise ValueError(f"Failed to decode bits to UTF-8 text. Data may be corrupted or not valid text. Details: {e}") from e
-    if original_bit_length is not None:
-        return text
-    # Comportement historique (non recommandé) :
-    return text.rstrip('\x00') 
+    return text 
