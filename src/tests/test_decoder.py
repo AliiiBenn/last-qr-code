@@ -174,5 +174,98 @@ class TestFinderPatternDetection(unittest.TestCase):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+    def test_get_tp_line_coords(self):
+        # Grille 7x7, FP TL à (0,0), TR à (60,0), BL à (0,60), cell_size=10
+        fp_corners = {'TL': (0,0), 'TR': (60,0), 'BL': (0,60)}
+        cell_size = 10
+        matrix_dim = 7
+        fp_size = 7
+        coords = decoder.get_tp_line_coords(fp_corners, cell_size, matrix_dim, fp_size)
+        # TP_H doit commencer à (0,60) et finir à (60,60)
+        self.assertAlmostEqual(coords['TP_H'][0][0], 0)
+        self.assertAlmostEqual(coords['TP_H'][0][1], 60)
+        self.assertAlmostEqual(coords['TP_H'][1][0], 60)
+        self.assertAlmostEqual(coords['TP_H'][1][1], 60)
+        # TP_V doit commencer à (60,0) et finir à (60,60)
+        self.assertAlmostEqual(coords['TP_V'][0][0], 60)
+        self.assertAlmostEqual(coords['TP_V'][0][1], 0)
+        self.assertAlmostEqual(coords['TP_V'][1][0], 60)
+        self.assertAlmostEqual(coords['TP_V'][1][1], 60)
+
+    def test_sample_tp_profile(self):
+        from src.core.decoder import sample_tp_profile
+        from src.core.image_utils import sample_line_profile
+        # Créer une image 21x7 avec une TP horizontale alternant noir/blanc sur la ligne 3
+        width, height = 21, 7
+        img = Image.new('RGB', (width, height), (255,255,255))
+        y_tp = 3
+        for x in range(width):
+            color = (0,0,0) if (x//3)%2 == 0 else (255,255,255)
+            img.putpixel((x, y_tp), color)
+        # Coords de la TP : de (0,3) à (20,3)
+        tp_coords = ((0, y_tp), (width-1, y_tp))
+        num_samples = width
+        profile = sample_tp_profile(img, tp_coords, num_samples)
+        expected = [(0,0,0) if (x//3)%2 == 0 else (255,255,255) for x in range(width)]
+        self.assertEqual(profile, expected)
+
+    def test_detect_tp_transitions(self):
+        from src.core.decoder import detect_tp_transitions
+        # Profil alternant 3 noirs, 3 blancs, 3 noirs, 3 blancs...
+        profile = []
+        for i in range(24):
+            if (i//3)%2 == 0:
+                profile.append((0,0,0))
+            else:
+                profile.append((255,255,255))
+        transitions = detect_tp_transitions(profile, threshold=10)
+        # On s'attend à une transition tous les 3 pixels
+        expected = [3,6,9,12,15,18,21]
+        self.assertEqual(transitions, expected)
+
+    def test_interpolate_grid_positions(self):
+        from src.core.decoder import interpolate_grid_positions
+        # Transitions régulières tous les 10 pixels pour 5 cellules : [0,10,20,30,40,50]
+        transitions = [0,10,20,30,40,50]
+        num_cells = 5
+        positions = interpolate_grid_positions(transitions, num_cells)
+        expected = [5,15,25,35,45]
+        for p, e in zip(positions, expected):
+            self.assertAlmostEqual(p, e)
+        # Cas transitions manquantes (extrapolation)
+        transitions = [0,50]
+        positions = interpolate_grid_positions(transitions, num_cells)
+        expected = [5,15,25,35,45]
+        for p, e in zip(positions, expected):
+            self.assertAlmostEqual(p, e)
+
+    def test_extract_bit_matrix_with_tp(self):
+        from src.core.decoder import extract_bit_matrix_with_tp
+        from src.core.image_utils import bits_to_rgb
+        # Créer une image 24x24 avec une grille 4x4, cellules irrégulières
+        img = Image.new('RGB', (24, 24), (255,255,255))
+        # Définir les positions des centres de colonnes et lignes
+        x_positions = [4, 8, 15, 19]
+        y_positions = [5, 10, 16, 20]
+        # Remplir chaque cellule avec une couleur différente
+        bit_matrix_ref = [['00','01','10','11'], ['01','10','11','00'], ['10','11','00','01'], ['11','00','01','10']]
+        for i, y in enumerate(y_positions):
+            for j, x in enumerate(x_positions):
+                color = bits_to_rgb(bit_matrix_ref[i][j])
+                for dx in range(-2,3):
+                    for dy in range(-2,3):
+                        xx = int(round(x))+dx
+                        yy = int(round(y))+dy
+                        if 0 <= xx < 24 and 0 <= yy < 24:
+                            img.putpixel((xx,yy), color)
+        calibration_map = {
+            '00': (255,255,255),
+            '01': (0,0,0),
+            '10': (255,0,0),
+            '11': (0,0,255)
+        }
+        bit_matrix = extract_bit_matrix_with_tp(img, x_positions, y_positions, calibration_map)
+        self.assertEqual(bit_matrix, bit_matrix_ref)
+
 if __name__ == '__main__':
     unittest.main() 

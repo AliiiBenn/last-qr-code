@@ -267,9 +267,11 @@ def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
             candidates.append(((cx, cy), (x1 - x0) * (y1 - y0)))
     # Garder les 3 plus grands
     candidates.sort(key=lambda tup: -tup[1])
+    # Diagnostic info that could be logged
+    num_candidates = len(candidates)
     centers = [c[0] for c in candidates[:3]]
     if len(centers) != 3:
-        raise RuntimeError(f"Finder Patterns non détectés correctement (trouvés: {len(centers)}).")
+        raise RuntimeError(f"Finder Patterns non détectés correctement (trouvés: {len(centers)}, candidats: {num_candidates}).")
     return centers
 
 def identify_fp_corners(centers: list[tuple[int, int]]) -> dict:
@@ -281,6 +283,12 @@ def identify_fp_corners(centers: list[tuple[int, int]]) -> dict:
     """
     if len(centers) != 3:
         raise ValueError("Il faut exactement 3 centres FP pour identifier les coins.")
+    if not all(
+        isinstance(center, tuple) and len(center) == 2 and
+        all(isinstance(coord, (int, float)) for coord in center)
+        for center in centers
+    ):
+        raise ValueError("Les centres doivent être des tuples de coordonnées (x,y).")
     # Calculer la somme des distances pour chaque point
     dists = []
     for i in range(3):
@@ -316,6 +324,9 @@ def compute_rotation_angle(fp_corners: dict) -> float:
     - fp_corners : dict {'TL': (x,y), 'TR': (x,y), 'BL': (x,y)}
     Retourne l'angle en degrés (0 = déjà horizontal, positif = tourner dans le sens trigo).
     """
+    required_keys = ['TL', 'TR', 'BL']
+    if not all(key in fp_corners for key in required_keys):
+        raise ValueError(f"fp_corners doit contenir les clés: {required_keys}")
     TL = np.array(fp_corners['TL'])
     TR = np.array(fp_corners['TR'])
     v = TR - TL
@@ -337,6 +348,11 @@ def estimate_cell_size_from_fp(fp_corners: dict, matrix_dim: int) -> float:
     Estime la taille d'une cellule (en pixels) à partir des coins FP et de la dimension de la matrice.
     Utilise la distance TL→TR (largeur) et TL→BL (hauteur), puis fait la moyenne.
     """
+    required_keys = ['TL', 'TR', 'BL']
+    if not all(key in fp_corners for key in required_keys):
+        raise ValueError(f"fp_corners doit contenir les clés: {required_keys}")
+    if matrix_dim <= 1:
+        raise ValueError("matrix_dim doit être supérieur à 1")
     TL = np.array(fp_corners['TL'])
     TR = np.array(fp_corners['TR'])
     BL = np.array(fp_corners['BL'])
@@ -350,11 +366,32 @@ def extract_bit_matrix_from_rotated_image(
     fp_corners: dict,
     cell_size: float,
     matrix_dim: int,
-    calibration_map: dict[str, tuple[int, int, int]]
-    ) -> list[list[str]]:
+    calibration_map: dict[str, tuple[int, int, int]],
+    sampling_window: int = 2
+) -> list[list[str]]:
     """
     Extrait la matrice de bits d'une image redressée (après rotation) en utilisant une transformation affine basée sur les 3 FP.
+    Args:
+        image: L'image à traiter
+        fp_corners: Dictionnaire des coins des finder patterns {'TL': (x,y), 'TR': (x,y), 'BL': (x,y)}
+        cell_size: Taille estimée d'une cellule en pixels
+        matrix_dim: Dimension de la matrice (nombre de cellules par côté)
+        calibration_map: Mapping des couleurs vers les bits
+        sampling_window: Taille de la fenêtre d'échantillonnage (sampling_window=2 donne une fenêtre 5x5)
+    Note: Cette fonction gère la rotation et le redimensionnement via une transformation affine,
+    mais ne corrige pas complètement les distorsions de perspective. Pour des images avec
+    une forte distorsion perspective, une transformation homographique (à 4 points) serait nécessaire.
     """
+    # Validation des paramètres
+    required_keys = ['TL', 'TR', 'BL']
+    if not all(key in fp_corners for key in required_keys):
+        raise ValueError(f"fp_corners doit contenir les clés: {required_keys}")
+    if not calibration_map:
+        raise ValueError("La calibration_map est vide.")
+    if cell_size <= 0:
+        raise ValueError("cell_size doit être positif")
+    if matrix_dim <= 1:
+        raise ValueError("matrix_dim doit être supérieur à 1")
     # 1. Positions logiques attendues des FP dans la grille (en pixels)
     fp_s = pc.FP_CONFIG['size']
     # Coordonnées logiques (centre de chaque FP en pixels dans la grille)
@@ -374,9 +411,128 @@ def extract_bit_matrix_from_rotated_image(
     w, h = image.width, image.height
     for i in range(matrix_dim):
         for j in range(matrix_dim):
-            pt = np.array([[ (j + 0.5) * cell_size, (i + 0.5) * cell_size ]], dtype=np.float32)
+            pt = np.array([[(j + 0.5) * cell_size, (i + 0.5) * cell_size]], dtype=np.float32)
             mapped = cv2.transform(pt[None, :, :], affine)[0,0]
             x, y = int(round(mapped[0])), int(round(mapped[1]))
+            x = max(0, min(w-1, x))
+            y = max(0, min(h-1, y))
+            rgb_vals = []
+            for dx in range(-sampling_window, sampling_window+1):
+                for dy in range(-sampling_window, sampling_window+1):
+                    xx = x + dx
+                    yy = y + dy
+                    if 0 <= xx < w and 0 <= yy < h:
+                        rgb_vals.append(image.getpixel((xx,yy)))
+            if not rgb_vals:
+                raise ValueError(f"Impossible d'échantillonner la cellule ({i},{j}) en ({x},{y}) : hors image.")
+            avg_rgb = tuple(int(round(sum(c)/len(rgb_vals))) for c in zip(*rgb_vals))
+            bits_pair = iu.rgb_to_bits(avg_rgb, calibration_map)
+            bit_matrix[i][j] = bits_pair
+    return bit_matrix
+
+def get_tp_line_coords(fp_corners: dict, cell_size: float, matrix_dim: int, fp_size: int) -> dict:
+    """
+    Calcule les coordonnées (en pixels) de la ligne TP horizontale et de la colonne TP verticale
+    à partir des coins FP, de la taille de cellule et de la dimension de matrice.
+    Retourne un dict :
+      {
+        'TP_H': (start_px, end_px),
+        'TP_V': (start_px, end_px)
+      }
+    start_px, end_px : tuples (x, y) en pixels
+    """
+    # Ligne TP horizontale : relie le FP TL au FP TR, à la ligne (fp_size-1) (juste sous le FP)
+    TL = np.array(fp_corners['TL'])
+    TR = np.array(fp_corners['TR'])
+    BL = np.array(fp_corners['BL'])
+    # Vecteurs de base
+    vec_h = (TR - TL) / (matrix_dim - 1)
+    vec_v = (BL - TL) / (matrix_dim - 1)
+    # Ligne TP horizontale : ligne fp_size-1
+    tp_h_row = fp_size - 1
+    tp_h_start = TL + vec_v * tp_h_row
+    tp_h_end = TR + vec_v * tp_h_row
+    # Colonne TP verticale : colonne fp_size-1
+    tp_v_col = fp_size - 1
+    tp_v_start = TL + vec_h * tp_v_col
+    tp_v_end = BL + vec_h * tp_v_col
+    return {
+        'TP_H': (tuple(tp_h_start), tuple(tp_h_end)),
+        'TP_V': (tuple(tp_v_start), tuple(tp_v_end))
+    }
+
+def sample_tp_profile(image: Image.Image, tp_coords: tuple, num_samples: int) -> list:
+    """
+    Extrait le profil de couleurs (RVB) le long d'une Timing Pattern (TP).
+    tp_coords : (start_px, end_px) en pixels
+    num_samples : nombre d'échantillons (doit être >= au nombre de cellules sur la TP)
+    Retourne une liste de tuples RVB.
+    """
+    from src.core.image_utils import sample_line_profile
+    start_px, end_px = tp_coords
+    return sample_line_profile(image, start_px, end_px, num_samples)
+
+def detect_tp_transitions(profile: list, threshold: int = 50) -> list:
+    """
+    Détecte les indices de transitions de couleur dans un profil de TP.
+    profile : liste de tuples RVB (ou valeurs de gris)
+    threshold : seuil de différence pour considérer une transition (par défaut 50)
+    Retourne la liste des indices où une transition est détectée.
+    """
+    transitions = []
+    for i in range(1, len(profile)):
+        c1 = profile[i-1]
+        c2 = profile[i]
+        # Distance euclidienne RVB
+        dist = sum((a-b)**2 for a, b in zip(c1, c2)) ** 0.5
+        if dist > threshold:
+            transitions.append(i)
+    return transitions
+
+def interpolate_grid_positions(transitions: list, num_cells: int) -> list:
+    """
+    Calcule la position (en pixels) du centre de chaque cellule à partir des indices de transitions.
+    transitions : liste des indices (en pixels) des transitions détectées (frontières de cellules)
+    num_cells : nombre de cellules à interpoler (ex: MATRIX_DIM)
+    Retourne une liste de positions (float) des centres de cellules.
+    """
+    if len(transitions) < num_cells + 1:
+        # Si transitions manquantes, extrapoler en bordure
+        # On suppose que transitions[0] est le bord gauche, transitions[-1] le bord droit
+        # On interpole linéairement entre les extrêmes
+        x0 = transitions[0]
+        x1 = transitions[-1]
+        positions = [x0 + (x1 - x0) * (i + 0.5) / num_cells for i in range(num_cells)]
+        return positions
+    # Sinon, transitions[i] = bord gauche de la cellule i
+    positions = []
+    for i in range(num_cells):
+        left = transitions[i]
+        right = transitions[i+1]
+        positions.append((left + right) / 2)
+    return positions
+
+def extract_bit_matrix_with_tp(
+    image: Image.Image,
+    x_positions: list,
+    y_positions: list,
+    calibration_map: dict[str, tuple[int, int, int]]
+    ) -> list[list[str]]:
+    """
+    Extrait la matrice de bits en utilisant les positions interpolées (x, y) pour chaque cellule.
+    x_positions : liste des positions (en pixels) des centres de colonnes
+    y_positions : liste des positions (en pixels) des centres de lignes
+    calibration_map : pour la conversion couleur->bits
+    Retourne la bit_matrix (len(y_positions) x len(x_positions))
+    """
+    matrix_dim_y = len(y_positions)
+    matrix_dim_x = len(x_positions)
+    bit_matrix = [[None for _ in range(matrix_dim_x)] for _ in range(matrix_dim_y)]
+    w, h = image.width, image.height
+    for i in range(matrix_dim_y):
+        for j in range(matrix_dim_x):
+            x = int(round(x_positions[j]))
+            y = int(round(y_positions[i]))
             x = max(0, min(w-1, x))
             y = max(0, min(h-1, y))
             rgb_vals = []
@@ -408,12 +564,37 @@ def decode_image_to_message(image_path: str) -> str:
     except Exception as e:
         raise ValueError(f"Decoder: Error loading image '{image_path}'. Details: {e}")
 
-    cell_px_size = estimate_image_parameters(image)
-    calibration_map = perform_color_calibration(image, cell_px_size)
+    # 1.5 Detect rotation if applicable and correct it
+    fp_corners = None
+    try:
+        # Detect finder patterns
+        fp_centers = detect_finder_patterns(image)
+        fp_corners = identify_fp_corners(fp_centers)
+        # Calculate rotation and rotate if needed
+        angle = compute_rotation_angle(fp_corners)
+        if abs(angle) > 1.0:  # Only rotate if angle is significant (>1 degree)
+            image = rotate_image(image, angle)
+            # Re-detect finder patterns after rotation
+            fp_centers = detect_finder_patterns(image)
+            fp_corners = identify_fp_corners(fp_centers)
+        # Estimate cell size from finder patterns
+        cell_px_size = estimate_cell_size_from_fp(fp_corners, pc.MATRIX_DIM)
+    except Exception as e:
+        # Fall back to simple parameter estimation if finder pattern detection fails
+        print(f"Warning: Finder pattern detection failed: {e}. Falling back to simple estimation.")
+        cell_px_size = estimate_image_parameters(image)
+
+    calibration_map = perform_color_calibration(image, int(round(cell_px_size)))
 
     # 2. Extract Bit Matrix and Streams
     try:
-        bit_matrix = extract_bit_matrix_from_image(image, cell_px_size, calibration_map)
+        # Try to use the rotation-aware extraction if we have finder patterns
+        if fp_corners is not None and cell_px_size is not None:
+            bit_matrix = extract_bit_matrix_from_rotated_image(
+                image, fp_corners, cell_px_size, pc.MATRIX_DIM, calibration_map
+            )
+        else:
+            bit_matrix = extract_bit_matrix_from_image(image, cell_px_size, calibration_map)
         metadata_stream = extract_metadata_stream(bit_matrix)
         payload_stream = extract_payload_stream(bit_matrix)
     except ValueError as e:

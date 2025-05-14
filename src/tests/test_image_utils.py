@@ -138,5 +138,24 @@ class TestImageUtils(unittest.TestCase):
         with self.assertRaises(ValueError):
             iu.rgb_to_bits((100, 100, 100), {})
 
+    def test_sample_line_profile(self):
+        # Créer une image 20x5 avec une ligne horizontale alternant noir/blanc
+        width, height = 20, 5
+        img = Image.new('RGB', (width, height), (255,255,255))
+        for x in range(width):
+            color = (0,0,0) if (x//2)%2 == 0 else (255,255,255)
+            for y in range(height):
+                img.putpixel((x, y), color)
+        # Profil le long de la ligne centrale
+        start_px = (0, height//2)
+        end_px = (width-1, height//2)
+        num_samples = width
+        profile = iu.sample_line_profile(img, start_px, end_px, num_samples)
+        # On s'attend à une alternance tous les 2 pixels
+        expected = []
+        for x in range(width):
+            expected.append((0,0,0) if (x//2)%2 == 0 else (255,255,255))
+        self.assertEqual(profile, expected)
+
 if __name__ == '__main__':
     unittest.main() 

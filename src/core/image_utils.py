@@ -1,5 +1,6 @@
 from PIL import Image, ImageDraw
 import src.core.protocol_config as pc
+import numpy as np
 
 def bits_to_rgb(bits_pair: str):
     """Convertit une paire de bits (ex: '01') en une couleur RVB en utilisant BITS_TO_COLOR_MAP."""
@@ -87,3 +88,23 @@ def rgb_to_bits(rgb_tuple: tuple[int, int, int], calibration_map: dict[str, tupl
         raise RuntimeError("Impossible de déterminer les bits les plus proches à partir de la calibration_map.")
         
     return closest_bits 
+
+def sample_line_profile(image: Image.Image, start_px: tuple[float, float], end_px: tuple[float, float], num_samples: int) -> list:
+    """
+    Échantillonne la couleur (RVB) le long d'un segment entre start_px et end_px (inclus),
+    en num_samples points également espacés.
+    Retourne une liste de tuples RVB (ou valeurs de gris si image convertie).
+    """
+    x0, y0 = start_px
+    x1, y1 = end_px
+    profile = []
+    for i in range(num_samples):
+        t = i / (num_samples - 1) if num_samples > 1 else 0
+        x = x0 + (x1 - x0) * t
+        y = y0 + (y1 - y0) * t
+        xi, yi = int(round(x)), int(round(y))
+        if 0 <= xi < image.width and 0 <= yi < image.height:
+            profile.append(image.getpixel((xi, yi)))
+        else:
+            profile.append((0, 0, 0))  # Valeur par défaut si hors image
+    return profile 
