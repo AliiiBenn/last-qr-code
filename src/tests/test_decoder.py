@@ -2,6 +2,7 @@ import unittest
 from PIL import Image, ImageDraw
 import numpy as np
 import src.core.decoder as decoder
+import os
 
 class TestFinderPatternDetection(unittest.TestCase):
     def test_detect_finder_patterns_synthetic(self):
@@ -116,6 +117,62 @@ class TestFinderPatternDetection(unittest.TestCase):
         cell_size2 = decoder.estimate_cell_size_from_fp(corners2, matrix_dim)
         expected2 = ((90)+(60))/2/6
         self.assertAlmostEqual(cell_size2, expected2, delta=0.5)
+
+    def test_integration_encode_rotate90_decode(self):
+        import src.core.encoder as encoder
+        import src.core.image_utils as image_utils
+        import src.core.protocol_config as pc
+        # Compatibilité V1/V2
+        if hasattr(pc, 'DEFAULT_CELL_PIXEL_SIZE'):
+            cell_size = pc.DEFAULT_CELL_PIXEL_SIZE
+        else:
+            cell_size = pc.get_protocol_config('V2_S')['DEFAULT_CELL_PIXEL_SIZE']
+        if hasattr(pc, 'MATRIX_DIM'):
+            matrix_dim = pc.MATRIX_DIM
+        else:
+            matrix_dim = pc.get_protocol_config('V2_S')['MATRIX_DIM']
+        message = "ROTATION"
+        # 1. Encoder le message
+        bit_matrix = encoder.encode_message_to_matrix(message, pc.DEFAULT_ECC_LEVEL_PERCENT)
+        # 2. Générer l'image
+        tmp_path = 'test_rotation_tmp.png'
+        image_utils.create_protocol_image(bit_matrix, cell_size, tmp_path)
+        from PIL import Image
+        img = Image.open(tmp_path)
+        # 3. Tourner l'image de 90°
+        img_rot = img.rotate(90, expand=False)
+        # 4. Détection FP
+        centers = decoder.detect_finder_patterns(img_rot)
+        corners = decoder.identify_fp_corners(centers)
+        angle = decoder.compute_rotation_angle(corners)
+        # 5. Rotation inverse pour redresser
+        img_redress = decoder.rotate_image(img_rot, -angle)
+        # DEBUG: Sauvegarder l'image redressée pour inspection
+        img_redress.save('debug_img_redress.png')
+        # 6. Redétecter FP sur l'image redressée
+        centers2 = decoder.detect_finder_patterns(img_redress)
+        corners2 = decoder.identify_fp_corners(centers2)
+        # 7. Estimer la taille de cellule
+        cell_size_est = cell_size  # Utiliser la valeur d'origine pour garantir la cohérence
+        # 8. Calibration couleurs
+        calibration_map = decoder.perform_color_calibration(img_redress, int(round(cell_size_est)))
+        # 9. Extraction de la grille
+        bit_matrix2 = decoder.extract_bit_matrix_from_rotated_image(
+            img_redress, corners2, cell_size_est, matrix_dim, calibration_map)
+        # 10. Décodage (pipeline normal)
+        metadata_stream = decoder.extract_metadata_stream(bit_matrix2)
+        payload_stream = decoder.extract_payload_stream(bit_matrix2)
+        parsed_metadata = decoder.dp.parse_metadata_bits(metadata_stream)
+        encrypted_message_bits = payload_stream[:parsed_metadata['message_encrypted_len']]
+        received_ecc_bits = payload_stream[parsed_metadata['message_encrypted_len']:]
+        is_ecc_valid = decoder.dp.verify_simple_ecc(encrypted_message_bits, received_ecc_bits)
+        self.assertTrue(is_ecc_valid)
+        padded_message_bits = decoder.dp.apply_xor_cipher(encrypted_message_bits, parsed_metadata['xor_key'])
+        decoded_message = decoder.dp.padded_bits_to_text(padded_message_bits)
+        self.assertEqual(decoded_message, message)
+        # Nettoyer le fichier temporaire
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 if __name__ == '__main__':
     unittest.main() 

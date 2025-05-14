@@ -5,6 +5,7 @@ import src.core.image_utils as iu
 import src.core.data_processing as dp
 import numpy as np
 from scipy.ndimage import label, find_objects
+import cv2
 
 def estimate_image_parameters(image: Image.Image) -> int:
     """
@@ -231,30 +232,35 @@ def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
     """
     Détecte les 3 Finder Patterns (FP) dans l'image.
     Retourne la liste des centres (x, y) en pixels des FP détectés.
-    Méthode simple :
-      - Convertit en niveaux de gris, seuillage binaire.
+    Méthode améliorée :
+      - Convertit en niveaux de gris, seuillage Otsu (plus robuste).
       - Cherche les 3 plus grands carrés noirs/blancs (motif FP) par analyse de blocs.
       - Retourne les centres (x, y) en pixels.
-    Limité : ne gère pas la perspective ni le bruit fort, mais robuste aux rotations multiples de 90°.
+    Plus tolérant aux artefacts de rotation.
     """
     # Convertir en niveaux de gris
     gray = image.convert('L')
     arr = np.array(gray)
-    # Seuillage binaire (Otsu ou simple)
-    thresh = arr.mean()
-    binary = (arr < thresh).astype(np.uint8)  # 1 = noir, 0 = blanc
+    # Seuillage Otsu (plus robuste que la moyenne)
+    try:
+        _, binary = cv2.threshold(arr, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    except ImportError:
+        # fallback: simple mean
+        thresh = arr.mean()
+        binary = (arr < thresh).astype(np.uint8)
     # Chercher les plus grands carrés noirs (FP core)
     labeled, num = label(binary)
     objects = find_objects(labeled)
     h, w = arr.shape
-    min_size = min(h, w) * 0.12  # typiquement ~7/35
+    min_size = min(h, w) * 0.10  # plus tolérant (avant: 0.12)
     candidates = []
     for _, sl in enumerate(objects):
         if sl is None:
             continue
         y0, y1 = sl[0].start, sl[0].stop
         x0, x1 = sl[1].start, sl[1].stop
-        if (y1 - y0) >= min_size and (x1 - x0) >= min_size and abs((y1 - y0) - (x1 - x0)) < min_size * 0.5:
+        # Tolérance accrue sur la forme carrée
+        if (y1 - y0) >= min_size and (x1 - x0) >= min_size and abs((y1 - y0) - (x1 - x0)) < min_size:
             # Calculer le centre
             cx = (x0 + x1) // 2
             cy = (y0 + y1) // 2
@@ -338,6 +344,54 @@ def estimate_cell_size_from_fp(fp_corners: dict, matrix_dim: int) -> float:
     height = np.linalg.norm(BL - TL)
     cell_size = (width + height) / 2 / (matrix_dim - 1)
     return cell_size
+
+def extract_bit_matrix_from_rotated_image(
+    image: Image.Image,
+    fp_corners: dict,
+    cell_size: float,
+    matrix_dim: int,
+    calibration_map: dict[str, tuple[int, int, int]]
+    ) -> list[list[str]]:
+    """
+    Extrait la matrice de bits d'une image redressée (après rotation) en utilisant une transformation affine basée sur les 3 FP.
+    """
+    # 1. Positions logiques attendues des FP dans la grille (en pixels)
+    fp_s = pc.FP_CONFIG['size']
+    # Coordonnées logiques (centre de chaque FP en pixels dans la grille)
+    tl_logical = np.array([(fp_s//2 + 0.5) * cell_size, (fp_s//2 + 0.5) * cell_size])
+    tr_logical = np.array([(matrix_dim - fp_s//2 - 0.5) * cell_size, (fp_s//2 + 0.5) * cell_size])
+    bl_logical = np.array([(fp_s//2 + 0.5) * cell_size, (matrix_dim - fp_s//2 - 0.5) * cell_size])
+    # 2. Centres détectés (ordre TL, TR, BL)
+    TL = np.array(fp_corners['TL'])
+    TR = np.array(fp_corners['TR'])
+    BL = np.array(fp_corners['BL'])
+    src = np.stack([tl_logical, tr_logical, bl_logical])
+    dst = np.stack([TL, TR, BL])
+    # 3. Calcul de la matrice affine (2x3)
+    affine = cv2.getAffineTransform(np.float32(src), np.float32(dst))
+    # 4. Pour chaque cellule, calculer le centre logique puis transformer
+    bit_matrix = [[None for _ in range(matrix_dim)] for _ in range(matrix_dim)]
+    w, h = image.width, image.height
+    for i in range(matrix_dim):
+        for j in range(matrix_dim):
+            pt = np.array([[ (j + 0.5) * cell_size, (i + 0.5) * cell_size ]], dtype=np.float32)
+            mapped = cv2.transform(pt[None, :, :], affine)[0,0]
+            x, y = int(round(mapped[0])), int(round(mapped[1]))
+            x = max(0, min(w-1, x))
+            y = max(0, min(h-1, y))
+            rgb_vals = []
+            for dx in [-2,-1,0,1,2]:
+                for dy in [-2,-1,0,1,2]:
+                    xx = x+dx
+                    yy = y+dy
+                    if 0 <= xx < w and 0 <= yy < h:
+                        rgb_vals.append(image.getpixel((xx,yy)))
+            if not rgb_vals:
+                raise ValueError(f"Impossible d'échantillonner la cellule ({i},{j}) en ({x},{y}) : hors image.")
+            avg_rgb = tuple(int(round(sum(c)/len(rgb_vals))) for c in zip(*rgb_vals))
+            bits_pair = iu.rgb_to_bits(avg_rgb, calibration_map)
+            bit_matrix[i][j] = bits_pair
+    return bit_matrix
 
 # --- Main Decoding Orchestration (Phase 6/7) ---
 
