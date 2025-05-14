@@ -1,3 +1,4 @@
+import copy
 # Constantes et paramètres de configuration du protocole
 
 # --- V1 (Compatibilité) ---
@@ -109,7 +110,7 @@ PROTOCOL_VERSIONS = {
             'protection_bits': 36,
             # 'logo_enabled_bit': 36,  # Exemple d'extension
         },
-        'LOGO_CONFIG': LOGO_CONFIG,
+        'LOGO_CONFIG': LOGO_CONFIG.copy(),
         'ECC_SYMBOL_SIZE_BITS': ECC_SYMBOL_SIZE_BITS,
         'DEFAULT_CELL_PIXEL_SIZE': 10
     },
@@ -140,7 +141,7 @@ PROTOCOL_VERSIONS = {
             'protection_bits': 64,
             # 'logo_enabled_bit': 64,
         },
-        'LOGO_CONFIG': LOGO_CONFIG,
+        'LOGO_CONFIG': LOGO_CONFIG.copy(),
         'ECC_SYMBOL_SIZE_BITS': ECC_SYMBOL_SIZE_BITS,
         'DEFAULT_CELL_PIXEL_SIZE': 10
     }
@@ -148,8 +149,8 @@ PROTOCOL_VERSIONS = {
 
 def get_protocol_config(version_name: str):
     """
-    Retourne la configuration complète pour une version donnée (ex: 'V2_S', 'V2_M').
+    Retourne une copie défensive de la configuration complète pour une version donnée (ex: 'V2_S', 'V2_M').
     """
     if version_name not in PROTOCOL_VERSIONS:
         raise ValueError(f"Unknown protocol version: {version_name}")
-    return PROTOCOL_VERSIONS[version_name] 
+    return copy.deepcopy(PROTOCOL_VERSIONS[version_name]) 

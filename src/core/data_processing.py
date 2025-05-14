@@ -245,47 +245,6 @@ def verify_simple_ecc(encrypted_data_bits: str, received_ecc_bits: str) -> bool:
         
     return calculated_ecc == received_ecc_bits
 
-def padded_bits_to_text(data_bits: str) -> str:
-    """
-    Converts a bit string (padded UTF-8) back to text.
-    The input data_bits is assumed to be the original message bits that were
-    padded with '0's at the end to reach a certain target length.
-    """
-    byte_list = []
-    # Iterate over the bit string in 8-bit chunks (bytes)
-    for i in range(0, len(data_bits), 8):
-        byte_str = data_bits[i : i + 8]
-        
-        if len(byte_str) < 8:
-            # This is the final, potentially incomplete chunk.
-            # If the original message's bit length was not a multiple of 8 (which is rare for UTF-8 strings),
-            # and padding was added to make data_bits not a multiple of 8, this chunk is purely padding.
-            # However, UTF-8 characters always align to byte boundaries.
-            # The padding in text_to_padded_bits makes the *total* bit string reach target_bit_length.
-            # The original UTF-8 part was already a multiple of 8 bits.
-            # So, any incomplete byte at the end of data_bits must be from padding beyond the last full byte of data/padding.
-            break 
-        
-        byte_list.append(int(byte_str, 2))
-    
-    byte_array = bytes(byte_list)
-    
-    try:
-        # Decode using UTF-8.
-        text = byte_array.decode('utf-8', errors='strict') # Use 'strict' to catch actual errors.
-    except UnicodeDecodeError as e:
-        # This indicates the bit sequence, after forming bytes, is not valid UTF-8.
-        # This could be due to data corruption not caught by ECC, or if the original data wasn't UTF-8 text.
-        # print(f"UnicodeDecodeError while converting bits to text: {e}. Bytes: {byte_array.hex()}")
-        # Consider how to handle this: raise error, return empty, or return a marker.
-        # For now, let's re-raise or return something indicative of an error.
-        raise ValueError(f"Failed to decode bits to UTF-8 text. Data may be corrupted or not valid text. Details: {e}") from e
-
-    # Remove trailing null characters ('\x00').
-    # These could arise if the padding '0's happened to form null bytes
-    # AND those null bytes were not part of the intended original message.
-    return text.rstrip('\x00') 
-
 def calculate_reed_solomon_ecc(data_bits: str, num_ecc_symbols: int, symbol_size_bits: int = 8) -> str:
     """
     Calcule les symboles ECC Reed-Solomon pour les data_bits donnés.
@@ -293,13 +252,16 @@ def calculate_reed_solomon_ecc(data_bits: str, num_ecc_symbols: int, symbol_size
     - num_ecc_symbols : nombre de symboles ECC (octets si symbol_size_bits=8)
     - symbol_size_bits : taille d'un symbole (par défaut 8 bits)
     Retourne la concaténation des bits ECC (en string).
+    ATTENTION :
+      - Le dernier octet est paddé à droite avec des zéros si data_bits n'est pas un multiple de 8.
+      - La taille totale (data_bytes) doit être <= 255 - num_ecc_symbols.
     """
+    if num_ecc_symbols <= 0:
+        return ''
     if reedsolo is None:
         raise ImportError("Le module 'reedsolo' n'est pas installé. Installez-le avec 'pip install reedsolo'.")
     if symbol_size_bits != 8:
         raise NotImplementedError("Seuls les symboles de 8 bits sont supportés pour l'instant.")
-    if num_ecc_symbols <= 0:
-        return ''
     # Découper data_bits en octets
     data_bytes = []
     for i in range(0, len(data_bits), 8):
@@ -307,6 +269,9 @@ def calculate_reed_solomon_ecc(data_bits: str, num_ecc_symbols: int, symbol_size
         if len(byte_str) < 8:
             byte_str = byte_str.ljust(8, '0')
         data_bytes.append(int(byte_str, 2))
+    max_msg = 255 - num_ecc_symbols
+    if len(data_bytes) > max_msg:
+        raise ValueError(f"Data too long: {len(data_bytes)} bytes (max {max_msg}) for RS({max_msg}+{num_ecc_symbols}, {max_msg})")
     # Encoder avec Reed-Solomon
     rs = reedsolo.RSCodec(num_ecc_symbols)
     encoded = rs.encode(bytes(data_bytes))
@@ -324,13 +289,16 @@ def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symb
     - symbol_size_bits : taille d'un symbole (par défaut 8 bits)
     Retourne (is_valid, corrected_data_bits).
     Si la correction échoue, is_valid=False et corrected_data_bits=None.
+    ATTENTION :
+      - Le dernier octet est paddé à droite avec des zéros si data_bits n'est pas un multiple de 8.
+      - La taille totale (data_bytes) doit être <= 255.
     """
+    if num_ecc_symbols <= 0:
+        return True, message_plus_ecc_bits  # Pas d'ECC à vérifier
     if reedsolo is None:
         raise ImportError("Le module 'reedsolo' n'est pas installé. Installez-le avec 'pip install reedsolo'.")
     if symbol_size_bits != 8:
         raise NotImplementedError("Seuls les symboles de 8 bits sont supportés pour l'instant.")
-    if num_ecc_symbols <= 0:
-        return True, message_plus_ecc_bits  # Pas d'ECC à vérifier
     # Découper en octets
     total_bytes = []
     for i in range(0, len(message_plus_ecc_bits), 8):
@@ -338,6 +306,8 @@ def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symb
         if len(byte_str) < 8:
             byte_str = byte_str.ljust(8, '0')
         total_bytes.append(int(byte_str, 2))
+    if len(total_bytes) > 255:
+        raise ValueError(f"Message trop long pour Reed-Solomon (max 255 octets, reçu {len(total_bytes)})")
     try:
         rs = reedsolo.RSCodec(num_ecc_symbols)
         decoded = rs.decode(bytes(total_bytes))
@@ -347,4 +317,28 @@ def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symb
         data_bits = ''.join(format(b, '08b') for b in data_bytes)
         return True, data_bits
     except reedsolo.ReedSolomonError:
-        return False, None 
+        return False, None
+
+def padded_bits_to_text(data_bits: str, original_bit_length: int = None) -> str:
+    """
+    Convertit une chaîne de bits (padded UTF-8) en texte.
+    - Si original_bit_length est fourni, tronque data_bits à cette longueur avant conversion (recommandé pour éviter de supprimer des \x00 valides).
+    - Sinon, supprime les octets nuls finaux (comportement historique, peut tronquer des messages valides se terminant par \x00).
+    """
+    if original_bit_length is not None:
+        data_bits = data_bits[:original_bit_length]
+    byte_list = []
+    for i in range(0, len(data_bits), 8):
+        byte_str = data_bits[i : i + 8]
+        if len(byte_str) < 8:
+            break
+        byte_list.append(int(byte_str, 2))
+    byte_array = bytes(byte_list)
+    try:
+        text = byte_array.decode('utf-8', errors='strict')
+    except UnicodeDecodeError as e:
+        raise ValueError(f"Failed to decode bits to UTF-8 text. Data may be corrupted or not valid text. Details: {e}") from e
+    if original_bit_length is not None:
+        return text
+    # Comportement historique (non recommandé) :
+    return text.rstrip('\x00') 
