@@ -1,6 +1,6 @@
 # Constantes et paramètres de configuration du protocole
 
-# Constantes Générales
+# --- V1 (Compatibilité) ---
 MATRIX_DIM = 35
 BITS_PER_CELL = 2
 
@@ -62,3 +62,94 @@ DEFAULT_XOR_KEY_BITS = METADATA_CONFIG['key_bits'] # Longueur de la clé XOR par
 
 # Paramètres de Génération d'Image
 DEFAULT_CELL_PIXEL_SIZE = 10 # Taille par défaut d'une cellule en pixels lors de la génération de l'image 
+
+# --- V2 (Multi-tailles, logo, ECC avancé, détection FP/TP) ---
+ECC_SYMBOL_SIZE_BITS = 8  # Pour Reed-Solomon
+
+# Config du logo (zone centrale, dimension en cellules)
+LOGO_CONFIG = {
+    'enabled': False,  # Par défaut désactivé
+    'cell_dimension': 7,  # Taille du carré central réservé au logo
+    # 'position': 'center'  # Peut être calculé dynamiquement
+}
+# Bit de signalisation logo dans les métadonnées (exemple, à intégrer dans METADATA_CONFIG V2)
+# LOGO_ENABLED_BIT = 1  # Index du bit dans le bloc de métadonnées (à ajuster selon l'ordre)
+
+# Paramètres pour la détection FP/TP
+FP_EXPECTED_RATIOS = [1, 1, 3, 1, 1]  # Pour balayage 1D du FP
+FP_DETECTION_THRESHOLD = 0.2  # Seuil de tolérance sur les ratios
+TP_SCAN_WINDOW = 3  # Largeur de fenêtre pour l'analyse des TP
+
+# Configurations multi-tailles/versions
+PROTOCOL_VERSIONS = {
+    'V2_S': {
+        'MATRIX_DIM': 35,
+        'BITS_PER_CELL': 2,
+        'FP_CONFIG': {
+            'size': 7,
+            'margin': 1,
+            'pattern_colors': [RED, BLUE, BLACK, WHITE]
+        },
+        'TP_CONFIG': {
+            'line_color1': BLACK,
+            'line_color2': WHITE
+        },
+        'CCP_CONFIG': {
+            'patch_size': 2,
+            'colors': [WHITE, BLACK, BLUE, RED]
+        },
+        'METADATA_CONFIG': {
+            'rows': 6,
+            'cols': 6,
+            'total_bits': 72,
+            'version_bits': 4,
+            'ecc_level_bits': 4,
+            'msg_len_bits': 12,
+            'key_bits': 16,
+            'protection_bits': 36,
+            # 'logo_enabled_bit': 36,  # Exemple d'extension
+        },
+        'LOGO_CONFIG': LOGO_CONFIG,
+        'ECC_SYMBOL_SIZE_BITS': ECC_SYMBOL_SIZE_BITS,
+        'DEFAULT_CELL_PIXEL_SIZE': 10
+    },
+    'V2_M': {
+        'MATRIX_DIM': 51,
+        'BITS_PER_CELL': 2,
+        'FP_CONFIG': {
+            'size': 9,
+            'margin': 1,
+            'pattern_colors': [RED, BLUE, BLACK, WHITE]
+        },
+        'TP_CONFIG': {
+            'line_color1': BLACK,
+            'line_color2': WHITE
+        },
+        'CCP_CONFIG': {
+            'patch_size': 2,
+            'colors': [WHITE, BLACK, BLUE, RED]
+        },
+        'METADATA_CONFIG': {
+            'rows': 8,
+            'cols': 8,
+            'total_bits': 128,
+            'version_bits': 4,
+            'ecc_level_bits': 4,
+            'msg_len_bits': 16,
+            'key_bits': 24,
+            'protection_bits': 64,
+            # 'logo_enabled_bit': 64,
+        },
+        'LOGO_CONFIG': LOGO_CONFIG,
+        'ECC_SYMBOL_SIZE_BITS': ECC_SYMBOL_SIZE_BITS,
+        'DEFAULT_CELL_PIXEL_SIZE': 10
+    }
+}
+
+def get_protocol_config(version_name: str):
+    """
+    Retourne la configuration complète pour une version donnée (ex: 'V2_S', 'V2_M').
+    """
+    if version_name not in PROTOCOL_VERSIONS:
+        raise ValueError(f"Unknown protocol version: {version_name}")
+    return PROTOCOL_VERSIONS[version_name] 

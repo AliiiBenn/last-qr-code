@@ -1,6 +1,12 @@
 import random
 import src.core.protocol_config as pc
 
+# --- ECC Reed-Solomon (V2) ---
+try:
+    import reedsolo
+except ImportError:
+    reedsolo = None
+
 def text_to_padded_bits(text: str, target_bit_length: int) -> str:
     """
     Convertit un texte en une chaîne de bits (UTF-8) et ajoute un padding de '0'
@@ -279,3 +285,66 @@ def padded_bits_to_text(data_bits: str) -> str:
     # These could arise if the padding '0's happened to form null bytes
     # AND those null bytes were not part of the intended original message.
     return text.rstrip('\x00') 
+
+def calculate_reed_solomon_ecc(data_bits: str, num_ecc_symbols: int, symbol_size_bits: int = 8) -> str:
+    """
+    Calcule les symboles ECC Reed-Solomon pour les data_bits donnés.
+    - data_bits : chaîne de bits (ex: '101010...')
+    - num_ecc_symbols : nombre de symboles ECC (octets si symbol_size_bits=8)
+    - symbol_size_bits : taille d'un symbole (par défaut 8 bits)
+    Retourne la concaténation des bits ECC (en string).
+    """
+    if reedsolo is None:
+        raise ImportError("Le module 'reedsolo' n'est pas installé. Installez-le avec 'pip install reedsolo'.")
+    if symbol_size_bits != 8:
+        raise NotImplementedError("Seuls les symboles de 8 bits sont supportés pour l'instant.")
+    if num_ecc_symbols <= 0:
+        return ''
+    # Découper data_bits en octets
+    data_bytes = []
+    for i in range(0, len(data_bits), 8):
+        byte_str = data_bits[i:i+8]
+        if len(byte_str) < 8:
+            byte_str = byte_str.ljust(8, '0')
+        data_bytes.append(int(byte_str, 2))
+    # Encoder avec Reed-Solomon
+    rs = reedsolo.RSCodec(num_ecc_symbols)
+    encoded = rs.encode(bytes(data_bytes))
+    # Les symboles ECC sont à la fin
+    ecc_bytes = encoded[-num_ecc_symbols:]
+    # Retourner les bits ECC
+    return ''.join(format(b, '08b') for b in ecc_bytes)
+
+
+def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symbols: int, symbol_size_bits: int = 8) -> (bool, str):
+    """
+    Vérifie et corrige (si possible) les erreurs dans message_plus_ecc_bits (data+ecc).
+    - message_plus_ecc_bits : bits concaténés (data + ecc)
+    - num_ecc_symbols : nombre de symboles ECC (octets)
+    - symbol_size_bits : taille d'un symbole (par défaut 8 bits)
+    Retourne (is_valid, corrected_data_bits).
+    Si la correction échoue, is_valid=False et corrected_data_bits=None.
+    """
+    if reedsolo is None:
+        raise ImportError("Le module 'reedsolo' n'est pas installé. Installez-le avec 'pip install reedsolo'.")
+    if symbol_size_bits != 8:
+        raise NotImplementedError("Seuls les symboles de 8 bits sont supportés pour l'instant.")
+    if num_ecc_symbols <= 0:
+        return True, message_plus_ecc_bits  # Pas d'ECC à vérifier
+    # Découper en octets
+    total_bytes = []
+    for i in range(0, len(message_plus_ecc_bits), 8):
+        byte_str = message_plus_ecc_bits[i:i+8]
+        if len(byte_str) < 8:
+            byte_str = byte_str.ljust(8, '0')
+        total_bytes.append(int(byte_str, 2))
+    try:
+        rs = reedsolo.RSCodec(num_ecc_symbols)
+        decoded = rs.decode(bytes(total_bytes))
+        # decoded est un tuple (data, ecc), on ne garde que data
+        data_bytes = decoded[0]
+        # Retourner les bits de data (sans ECC)
+        data_bits = ''.join(format(b, '08b') for b in data_bytes)
+        return True, data_bits
+    except reedsolo.ReedSolomonError:
+        return False, None 

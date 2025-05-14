@@ -2,6 +2,7 @@ import unittest
 from unittest import mock
 import src.core.data_processing as dp
 import src.core.protocol_config as pc
+import sys
 
 class TestDataProcessing(unittest.TestCase):
 
@@ -358,6 +359,63 @@ class TestDecoderDataProcessing(unittest.TestCase):
         
         # Test with only an incomplete byte
         self.assertEqual(dp.padded_bits_to_text("10101"), "")
+
+
+class TestReedSolomonECC(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import reedsolo
+            cls.reedsolo_available = True
+        except ImportError:
+            cls.reedsolo_available = False
+
+    def setUp(self):
+        if not self.reedsolo_available:
+            self.skipTest("reedsolo n'est pas installé")
+
+    def test_calculate_reed_solomon_ecc_length(self):
+        data_bits = '10101010' * 4  # 32 bits (4 octets)
+        num_ecc_symbols = 4
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits, num_ecc_symbols)
+        self.assertEqual(len(ecc_bits), num_ecc_symbols * 8)
+
+    def test_rs_encode_decode_no_error(self):
+        data_bits = '11001100' * 8  # 64 bits (8 octets)
+        num_ecc_symbols = 8
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits, num_ecc_symbols)
+        message_plus_ecc = data_bits + ecc_bits
+        is_valid, corrected = dp.verify_and_correct_reed_solomon_ecc(message_plus_ecc, num_ecc_symbols)
+        self.assertTrue(is_valid)
+        # Les bits de data peuvent être paddés à la fin, donc on compare le début
+        self.assertTrue(corrected.startswith(data_bits))
+
+    def test_rs_correct_single_error(self):
+        data_bits = '11110000' * 8  # 64 bits
+        num_ecc_symbols = 8
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits, num_ecc_symbols)
+        message_plus_ecc = list(data_bits + ecc_bits)
+        # Introduire une erreur sur un bit dans le premier octet
+        message_plus_ecc[3] = '1' if message_plus_ecc[3] == '0' else '0'
+        corrupted = ''.join(message_plus_ecc)
+        is_valid, corrected = dp.verify_and_correct_reed_solomon_ecc(corrupted, num_ecc_symbols)
+        self.assertTrue(is_valid)
+        self.assertTrue(corrected.startswith(data_bits))
+
+    def test_rs_too_many_errors(self):
+        data_bits = '10101010' * 8  # 64 bits
+        num_ecc_symbols = 8
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits, num_ecc_symbols)
+        message_plus_ecc = list(data_bits + ecc_bits)
+        # Injecter des erreurs sur 5 octets entiers (soit 5*8=40 bits), ce qui dépasse la capacité de correction (t=4)
+        for octet in range(5):
+            start = octet * 8
+            for i in range(start, start + 8):
+                message_plus_ecc[i] = '1' if message_plus_ecc[i] == '0' else '0'
+        corrupted = ''.join(message_plus_ecc)
+        is_valid, corrected = dp.verify_and_correct_reed_solomon_ecc(corrupted, num_ecc_symbols)
+        self.assertFalse(is_valid)
+        self.assertIsNone(corrected)
 
 
 if __name__ == '__main__':
