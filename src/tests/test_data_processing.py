@@ -2,7 +2,6 @@ import unittest
 from unittest import mock
 import src.core.data_processing as dp
 import src.core.protocol_config as pc
-import sys
 
 class TestDataProcessing(unittest.TestCase):
 

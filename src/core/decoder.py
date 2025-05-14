@@ -4,6 +4,7 @@ import src.core.matrix_layout as ml
 import src.core.image_utils as iu
 import src.core.data_processing as dp
 import numpy as np
+from scipy.ndimage import label, find_objects
 
 def estimate_image_parameters(image: Image.Image) -> int:
     """
@@ -243,31 +244,100 @@ def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
     thresh = arr.mean()
     binary = (arr < thresh).astype(np.uint8)  # 1 = noir, 0 = blanc
     # Chercher les plus grands carrés noirs (FP core)
-    from scipy.ndimage import label, find_objects
     labeled, num = label(binary)
     objects = find_objects(labeled)
-    # Filtrer les gros carrés (taille > 5% de l'image)
     h, w = arr.shape
     min_size = min(h, w) * 0.12  # typiquement ~7/35
     candidates = []
-    for i, sl in enumerate(objects):
+    for _, sl in enumerate(objects):
         if sl is None:
             continue
         y0, y1 = sl[0].start, sl[0].stop
         x0, x1 = sl[1].start, sl[1].stop
-        if (y1 - y0) >= min_size and (x1 - x0) >= min_size:
-            # Vérifier la compacité (carré)
-            if abs((y1 - y0) - (x1 - x0)) < min_size * 0.5:
-                # Calculer le centre
-                cx = (x0 + x1) // 2
-                cy = (y0 + y1) // 2
-                candidates.append(((cx, cy), (x1 - x0) * (y1 - y0)))
+        if (y1 - y0) >= min_size and (x1 - x0) >= min_size and abs((y1 - y0) - (x1 - x0)) < min_size * 0.5:
+            # Calculer le centre
+            cx = (x0 + x1) // 2
+            cy = (y0 + y1) // 2
+            candidates.append(((cx, cy), (x1 - x0) * (y1 - y0)))
     # Garder les 3 plus grands
     candidates.sort(key=lambda tup: -tup[1])
     centers = [c[0] for c in candidates[:3]]
     if len(centers) != 3:
         raise RuntimeError(f"Finder Patterns non détectés correctement (trouvés: {len(centers)}).")
     return centers
+
+def identify_fp_corners(centers: list[tuple[int, int]]) -> dict:
+    """
+    Identifie les coins logiques (TL, TR, BL) à partir des 3 centres FP détectés.
+    Retourne un dict {'TL': (x,y), 'TR': (x,y), 'BL': (x,y)}.
+    - TL : le FP dont la somme des distances aux deux autres est la plus faible.
+    - TR/BL : déterminés par orientation (produit vectoriel).
+    """
+    if len(centers) != 3:
+        raise ValueError("Il faut exactement 3 centres FP pour identifier les coins.")
+    # Calculer la somme des distances pour chaque point
+    dists = []
+    for i in range(3):
+        s = 0
+        for j in range(3):
+            if i != j:
+                s += np.linalg.norm(np.array(centers[i]) - np.array(centers[j]))
+        dists.append(s)
+    tl_idx = int(np.argmin(dists))
+    TL = centers[tl_idx]
+    # Les deux autres
+    idx = [0,1,2]
+    idx.remove(tl_idx)
+    A = np.array(TL)
+    B = np.array(centers[idx[0]])
+    C = np.array(centers[idx[1]])
+    # Vecteurs
+    v1 = B - A
+    v2 = C - A
+    # Produit vectoriel (z) pour savoir qui est à droite (TR) et en bas (BL)
+    cross = np.cross(v1, v2)
+    if cross > 0:
+        TR = tuple(centers[idx[0]])
+        BL = tuple(centers[idx[1]])
+    else:
+        TR = tuple(centers[idx[1]])
+        BL = tuple(centers[idx[0]])
+    return {'TL': TL, 'TR': TR, 'BL': BL}
+
+def compute_rotation_angle(fp_corners: dict) -> float:
+    """
+    Calcule l'angle de rotation (en degrés) à appliquer pour aligner le segment TL→TR sur l'axe horizontal.
+    - fp_corners : dict {'TL': (x,y), 'TR': (x,y), 'BL': (x,y)}
+    Retourne l'angle en degrés (0 = déjà horizontal, positif = tourner dans le sens trigo).
+    """
+    TL = np.array(fp_corners['TL'])
+    TR = np.array(fp_corners['TR'])
+    v = TR - TL
+    angle_rad = np.arctan2(v[1], v[0])
+    angle_deg = np.degrees(angle_rad)
+    return angle_deg
+
+def rotate_image(image: Image.Image, angle: float) -> Image.Image:
+    """
+    Tourne l'image de l'angle donné (en degrés, sens trigo) autour de son centre.
+    - angle > 0 : sens anti-horaire (trigo)
+    - angle < 0 : sens horaire
+    Retourne une nouvelle image PIL de même taille.
+    """
+    return image.rotate(-angle, resample=Image.BICUBIC, expand=False, center=(image.width//2, image.height//2))
+
+def estimate_cell_size_from_fp(fp_corners: dict, matrix_dim: int) -> float:
+    """
+    Estime la taille d'une cellule (en pixels) à partir des coins FP et de la dimension de la matrice.
+    Utilise la distance TL→TR (largeur) et TL→BL (hauteur), puis fait la moyenne.
+    """
+    TL = np.array(fp_corners['TL'])
+    TR = np.array(fp_corners['TR'])
+    BL = np.array(fp_corners['BL'])
+    width = np.linalg.norm(TR - TL)
+    height = np.linalg.norm(BL - TL)
+    cell_size = (width + height) / 2 / (matrix_dim - 1)
+    return cell_size
 
 # --- Main Decoding Orchestration (Phase 6/7) ---
 

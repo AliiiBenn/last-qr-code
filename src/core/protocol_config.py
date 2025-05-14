@@ -61,9 +61,6 @@ DEFAULT_ECC_LEVEL_PERCENT = 20  # Pourcentage de bits dédiés à l'ECC par rapp
 # Paramètres de Cryptage
 DEFAULT_XOR_KEY_BITS = METADATA_CONFIG['key_bits'] # Longueur de la clé XOR par défaut (en bits)
 
-# Paramètres de Génération d'Image
-DEFAULT_CELL_PIXEL_SIZE = 10 # Taille par défaut d'une cellule en pixels lors de la génération de l'image 
-
 # --- V2 (Multi-tailles, logo, ECC avancé, détection FP/TP) ---
 ECC_SYMBOL_SIZE_BITS = 8  # Pour Reed-Solomon
 
@@ -83,6 +80,17 @@ TP_SCAN_WINDOW = 3  # Largeur de fenêtre pour l'analyse des TP
 
 # Configurations multi-tailles/versions
 PROTOCOL_VERSIONS = {
+    'V1': {
+        'MATRIX_DIM': MATRIX_DIM,
+        'BITS_PER_CELL': BITS_PER_CELL,
+        'FP_CONFIG': copy.deepcopy(FP_CONFIG),
+        'TP_CONFIG': copy.deepcopy(TP_CONFIG),
+        'CCP_CONFIG': copy.deepcopy(CCP_CONFIG),
+        'METADATA_CONFIG': copy.deepcopy(METADATA_CONFIG),
+        'LOGO_CONFIG': copy.deepcopy(LOGO_CONFIG),
+        'ECC_SYMBOL_SIZE_BITS': ECC_SYMBOL_SIZE_BITS,
+        'DEFAULT_CELL_PIXEL_SIZE': 10
+    },
     'V2_S': {
         'MATRIX_DIM': 35,
         'BITS_PER_CELL': 2,
@@ -136,9 +144,9 @@ PROTOCOL_VERSIONS = {
             'total_bits': 128,
             'version_bits': 4,
             'ecc_level_bits': 4,
-            'msg_len_bits': 16,
-            'key_bits': 24,
-            'protection_bits': 64,
+            'msg_len_bits': 20,     # 4 + 4 + 20 + 36 = 64
+            'key_bits': 36,
+            'protection_bits': 64,  # keep repetition
             # 'logo_enabled_bit': 64,
         },
         'LOGO_CONFIG': copy.deepcopy(LOGO_CONFIG),
@@ -149,7 +157,7 @@ PROTOCOL_VERSIONS = {
 
 def get_protocol_config(version_name: str):
     """
-    Retourne une copie défensive de la configuration complète pour une version donnée (ex: 'V2_S', 'V2_M').
+    Retourne une copie défensive de la configuration complète pour une version donnée (ex: 'V2_S', 'V2_M', 'V1').
     """
     if version_name not in PROTOCOL_VERSIONS:
         raise ValueError(f"Unknown protocol version: {version_name}")

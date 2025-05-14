@@ -311,8 +311,11 @@ def verify_and_correct_reed_solomon_ecc(message_plus_ecc_bits: str, num_ecc_symb
     try:
         rs = reedsolo.RSCodec(num_ecc_symbols)
         decoded = rs.decode(bytes(total_bytes))
-        # decoded est un tuple (data, ecc), on ne garde que data
-        data_bytes = decoded[0]
+        # Newer reedsolo returns bytes, older may return (data, ecc)
+        if isinstance(decoded, tuple):
+            data_bytes = decoded[0]
+        else:
+            data_bytes = decoded
         # Retourner les bits de data (sans ECC)
         data_bits = ''.join(format(b, '08b') for b in data_bytes)
         return True, data_bits
