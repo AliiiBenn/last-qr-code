@@ -14,10 +14,12 @@ import core.protocol_config as pc
 def main():
     print("Starting main execution...")
     message_to_encode = "Hello World"
-    ecc_percentage = pc.DEFAULT_ECC_LEVEL_PERCENT
+    # Use V2_S config for default values
+    protocol_config = pc.get_protocol_config('V2_S')
+    ecc_percentage = protocol_config['DEFAULT_ECC_LEVEL_PERCENT'] if 'DEFAULT_ECC_LEVEL_PERCENT' in protocol_config else pc.DEFAULT_ECC_LEVEL_PERCENT
     output_directory = "images_generes"
     output_image_filename = os.path.join(output_directory, "test_output_from_main.png")
-    cell_size = pc.DEFAULT_CELL_PIXEL_SIZE
+    cell_size = protocol_config['DEFAULT_CELL_PIXEL_SIZE']
 
     # Créer le dossier de sortie s'il n'existe pas
     os.makedirs(output_directory, exist_ok=True)
