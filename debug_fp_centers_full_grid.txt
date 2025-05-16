@@ -1,7 +1,7 @@
 --- Detected FP Centers ---
-Detected FP 0 at (35,35) : RGB=(255, 0, 0)
-Detected FP 1 at (315,35) : RGB=(0, 0, 255)
-Detected FP 2 at (35,315) : RGB=(0, 0, 0)
+Detected FP 0 at (175,185) : RGB=(0, 0, 0)
+Detected FP 1 at (85,110) : RGB=(255, 255, 255)
+Detected FP 2 at (170,40) : RGB=(255, 0, 0)
 
 --- Expected FP Core Centers ---
 Expected TL core center at cell(3,3) -> pixel(35,35) : RGB=(255, 0, 0)
