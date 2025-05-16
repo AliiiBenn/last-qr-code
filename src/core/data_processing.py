@@ -185,8 +185,12 @@ def parse_metadata_bits(metadata_stream: str, metadata_cfg: dict = None) -> dict
             matches = sum(b1 == b2 for b1, b2 in zip(block1, block2))
             ratio = matches / len(block1)
             if ratio >= 0.8:
-                # Correction par majorité bit à bit
-                corrected = ''.join(b1 if b1 == b2 else '0' for b1, b2 in zip(block1, block2))
+                # Correction par majorité bit à bit (majorité sur la colonne)
+                corrected = ''.join(
+                    b1 if b1 == b2
+                    else ('1' if block1.count('1') > block2.count('1') else '0')
+                    for b1, b2 in zip(block1, block2)
+                )
                 import warnings
                 warnings.warn(
                     f"Metadata protection: blocks differ but {ratio*100:.1f}% bits match. "
@@ -272,7 +276,7 @@ def calculate_reed_solomon_ecc(data_bits: str, num_ecc_symbols: int, symbol_size
       - La taille totale (data_bytes) doit être <= 255 - num_ecc_symbols.
     """
     if num_ecc_symbols <= 0:
-        return ''
+        raise ValueError("num_ecc_symbols must be a positive integer.")
     if reedsolo is None:
         raise ImportError("Le module 'reedsolo' n'est pas installé. Installez-le avec 'pip install reedsolo'.")
     if symbol_size_bits != 8:
@@ -347,8 +351,6 @@ def padded_bits_to_text(data_bits: str, *, original_bit_length: int) -> str:
     byte_list = []
     for i in range(0, len(data_bits), 8):
         byte_str = data_bits[i : i + 8]
-        if len(byte_str) < 8:
-            break
         byte_list.append(int(byte_str, 2))
     byte_array = bytes(byte_list)
     try:

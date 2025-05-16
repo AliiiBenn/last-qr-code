@@ -95,14 +95,15 @@ class TestMatrixLayout(unittest.TestCase):
         self.assertEqual(ml.get_cell_zone_type(7,7), 'DATA_ECC') # Center-ish area
 
     def test_get_fixed_pattern_bits(self):
-        # FP_TL_CORE (Size 7, Margin 1 -> Core 5x5. pattern_colors: [RED, BLUE, BLACK, WHITE])
-        # Relative coords for 5x5 core: 0..4 for row/col
-        # Center (2,2) -> RED ('10')
-        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 2, 2), pc.COLOR_TO_BITS_MAP[pc.RED])
-        # Ring 1 (e.g., (1,2)) -> BLUE ('11')
-        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 1, 2), pc.COLOR_TO_BITS_MAP[pc.BLUE])
-        # Ring 2 (e.g., (0,2)) -> BLACK ('01')
-        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 0, 2), pc.COLOR_TO_BITS_MAP[pc.BLACK])
+        # FP_TL_CORE (centre doit être ROUGE)
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 2, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['TL']])
+        # FP_TR_CORE (centre doit être BLEU)
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_TR_CORE', 2, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['TR']])
+        # FP_BL_CORE (centre doit être NOIR)
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_BL_CORE', 2, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['BL']])
+        # Anneaux restent inchangés (exemple pour TL)
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 1, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['pattern_colors'][1]])
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 0, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['pattern_colors'][2]])
 
         # FP_TL_MARGIN -> WHITE ('00')
         self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_MARGIN', 0, 0), pc.COLOR_TO_BITS_MAP[pc.WHITE])

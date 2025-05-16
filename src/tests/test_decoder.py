@@ -3,6 +3,7 @@ from PIL import Image, ImageDraw
 import numpy as np
 import src.core.decoder as decoder
 import os
+import src.core.protocol_config as pc
 
 class TestFinderPatternDetection(unittest.TestCase):
     def test_detect_finder_patterns_synthetic(self):
@@ -34,25 +35,22 @@ class TestFinderPatternDetection(unittest.TestCase):
             self.assertTrue(found, f"FP attendu {ec} non détecté dans {centers}")
 
     def test_identify_fp_corners(self):
-        # Centres dans l'ordre TL, TR, BL
-        fp_size = 70
-        size = 350
-        TL = (fp_size//2, fp_size//2)
-        TR = (size-fp_size//2-1, fp_size//2)
-        BL = (fp_size//2, size-fp_size//2-1)
-        centers = [TL, TR, BL]
-        corners = decoder.identify_fp_corners(centers)
-        self.assertEqual(corners['TL'], TL)
-        self.assertEqual(corners['TR'], TR)
-        self.assertEqual(corners['BL'], BL)
-        # Image tournée de 90° (TR devient TL, BL devient TR, TL devient BL)
-        centers_rot = [TR, BL, TL]
-        corners_rot = decoder.identify_fp_corners(centers_rot)
-        self.assertEqual(set(corners_rot.values()), set([TL, TR, BL]))
-        # TL doit être le plus proche des deux autres
-        dists = [sum(np.linalg.norm(np.array(c)-np.array(o)) for o in centers_rot if o!=c) for c in centers_rot]
-        min_idx = int(np.argmin(dists))
-        self.assertEqual(corners_rot['TL'], centers_rot[min_idx])
+        # Générer une image factice avec 3 FP de couleurs différentes
+        img = Image.new('RGB', (100, 100), pc.WHITE)
+        draw = ImageDraw.Draw(img)
+        # Placer 3 FP (cercles) avec centre couleur unique
+        centers = [(20, 20), (80, 20), (20, 80)]
+        colors = [pc.FP_CONFIG['center_colors']['TL'], pc.FP_CONFIG['center_colors']['TR'], pc.FP_CONFIG['center_colors']['BL']]
+        for (cx, cy), col in zip(centers, colors):
+            draw.ellipse((cx-3, cy-3, cx+3, cy+3), fill=col)
+        # cell_px_size arbitraire (ici 10)
+        corners = decoder.identify_fp_corners_by_color(img, centers, 10)
+        self.assertIn('TL', corners)
+        self.assertIn('TR', corners)
+        self.assertIn('BL', corners)
+        self.assertEqual(corners['TL'], centers[0])
+        self.assertEqual(corners['TR'], centers[1])
+        self.assertEqual(corners['BL'], centers[2])
 
     def test_compute_rotation_angle(self):
         # TL à gauche, TR à droite (horizontal)
@@ -143,15 +141,18 @@ class TestFinderPatternDetection(unittest.TestCase):
         img_rot = img.rotate(90, expand=False)
         # 4. Détection FP
         centers = decoder.detect_finder_patterns(img_rot)
-        corners = decoder.identify_fp_corners(centers)
+        # Diagnostic : logguer la couleur centrale lue pour chaque centre FP
+        with open('debug_fp_colors.txt', 'w') as dbg:
+            for idx, (cx, cy) in enumerate(centers):
+                rgb = img_rot.getpixel((int(round(cx)), int(round(cy))))
+                dbg.write(f"FP {idx} at ({cx},{cy}) : RGB={rgb}\n")
+        corners = decoder.identify_fp_corners_by_color(img_rot, centers, cell_size)
         angle = decoder.compute_rotation_angle(corners)
         # 5. Rotation inverse pour redresser
         img_redress = decoder.rotate_image(img_rot, -angle)
-        # DEBUG: Sauvegarder l'image redressée pour inspection
-        img_redress.save('debug_img_redress.png')
         # 6. Redétecter FP sur l'image redressée
         centers2 = decoder.detect_finder_patterns(img_redress)
-        corners2 = decoder.identify_fp_corners(centers2)
+        corners2 = decoder.identify_fp_corners_by_color(img_redress, centers2, cell_size)
         # 7. Estimer la taille de cellule
         cell_size_est = cell_size  # Utiliser la valeur d'origine pour garantir la cohérence
         # 8. Calibration couleurs
@@ -202,7 +203,6 @@ class TestFinderPatternDetection(unittest.TestCase):
 
     def test_sample_tp_profile(self):
         from src.core.decoder import sample_tp_profile
-        from src.core.image_utils import sample_line_profile
         # Créer une image 21x7 avec une TP horizontale alternant noir/blanc sur la ligne 3
         width, height = 21, 7
         img = Image.new('RGB', (width, height), (255,255,255))

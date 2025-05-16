@@ -149,18 +149,26 @@ def get_fixed_pattern_bits(zone_type, relative_row, relative_col):
     if 'CORE' in zone_type: # FP_TL_CORE, FP_TR_CORE, FP_BL_CORE
         # Core size is (FP_CONFIG['size'] - 2 * margin)
         core_dim = pc.FP_CONFIG['size'] - 2 * fp_m # e.g., 7 - 2*1 = 5
-        
         # Pattern concentrique pour le core 5x5 (si size=7, margin=1)
         # pattern_colors = [RED, BLUE, BLACK, WHITE] (du centre vers l'extérieur pour le FP)
-        # C0 (RED) for center, C1 (BLUE) for next ring, C2 (BLACK) for outer ring of core
-        # C3 (WHITE) is for margin
+        # C0 (center) est maintenant spécifique à chaque coin
         center_coord = core_dim // 2 # e.g. 5//2 = 2
         dist_r = abs(relative_row - center_coord)
         dist_c = abs(relative_col - center_coord)
         max_dist = max(dist_r, dist_c)
 
+        # Déterminer le coin (TL, TR, BL) à partir du zone_type
+        if zone_type.startswith('FP_TL'):
+            center_color = pc.FP_CONFIG['center_colors']['TL']
+        elif zone_type.startswith('FP_TR'):
+            center_color = pc.FP_CONFIG['center_colors']['TR']
+        elif zone_type.startswith('FP_BL'):
+            center_color = pc.FP_CONFIG['center_colors']['BL']
+        else:
+            center_color = pc.FP_CONFIG['pattern_colors'][0] # fallback
+
         if max_dist == 0: # Centre
-            color = pc.FP_CONFIG['pattern_colors'][0]
+            color = center_color
         elif max_dist == 1: # Premier anneau
             color = pc.FP_CONFIG['pattern_colors'][1]
         elif max_dist == 2: # Deuxième anneau (bord du core 5x5)

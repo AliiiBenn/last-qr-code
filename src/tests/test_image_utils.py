@@ -5,6 +5,7 @@ from PIL import Image, UnidentifiedImageError
 
 import src.core.protocol_config as pc
 import src.core.image_utils as iu
+from src.core.matrix_layout import get_cell_zone_type, get_fixed_pattern_bits
 
 class TestImageUtils(unittest.TestCase):
 
@@ -156,6 +157,35 @@ class TestImageUtils(unittest.TestCase):
         for x in range(width):
             expected.append((0,0,0) if (x//2)%2 == 0 else (255,255,255))
         self.assertEqual(profile, expected)
+
+    def test_fp_center_colors(self):
+        # Générer une image 35x35 cellules, chaque cellule = 10px
+        cell_px_size = 10
+        matrix_dim = 35
+        img_size = matrix_dim * cell_px_size
+        img = Image.new('RGB', (img_size, img_size), pc.WHITE)
+        # Remplir uniquement les FP
+        for r in range(matrix_dim):
+            for c in range(matrix_dim):
+                zone = get_cell_zone_type(r, c)
+                if 'FP_' in zone:
+                    bits = get_fixed_pattern_bits(zone.replace('_MARGIN',''), r%7 if 'FP_' in zone else 0, c%7 if 'FP_' in zone else 0)
+                    color = iu.bits_to_rgb(bits)
+                    for dr in range(cell_px_size):
+                        for dc in range(cell_px_size):
+                            img.putpixel((c*cell_px_size+dc, r*cell_px_size+dr), color)
+        # Vérifier la couleur centrale de chaque FP
+        fp_coords = {
+            'TL': (3, 3),
+            'TR': (3, matrix_dim-4),
+            'BL': (matrix_dim-4, 3)
+        }
+        expected = pc.FP_CONFIG['center_colors']
+        for label, (r, c) in fp_coords.items():
+            px = c*cell_px_size + cell_px_size//2
+            py = r*cell_px_size + cell_px_size//2
+            rgb = img.getpixel((px, py))
+            self.assertEqual(rgb, expected[label], f"FP {label} centre: attendu {expected[label]}, obtenu {rgb}")
 
 if __name__ == '__main__':
     unittest.main() 

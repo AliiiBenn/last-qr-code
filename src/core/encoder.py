@@ -97,10 +97,12 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
             raise ValueError(f"Trop de place pour RS: {total_bytes} octets (max 255). Réduisez la taille de la matrice ou la zone DATA_ECC.")
         # Nombre de symboles ECC (octets)
         num_ecc_symbols = int((total_bytes * ecc_level_percent) // 100)
-        if num_ecc_symbols < 0: num_ecc_symbols = 0
+        if num_ecc_symbols < 0:
+            num_ecc_symbols = 0
         # Clamp to [1, total_bytes-1] -> must leave at least one data byte
         num_ecc_symbols = max(1, min(num_ecc_symbols, total_bytes - 1))
         num_data_bytes = total_bytes - num_ecc_symbols
+        # Reed-Solomon peut corriger jusqu'à t=num_ecc_symbols/2 erreurs de symboles
         target_message_bit_length = num_data_bytes * 8
         # Pour la métadonnée, on encode le nombre de symboles ECC sur ecc_level_code (4 bits, max 15)
         ecc_code_for_metadata = min(num_ecc_symbols, (2**pc.METADATA_CONFIG['ecc_level_bits'])-1)
@@ -113,7 +115,8 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
         min_data_bits_needed = 8
         if num_ecc_bits > available_data_ecc_bits - min_data_bits_needed:
             num_ecc_bits = int((available_data_ecc_bits - min_data_bits_needed) // 8) * 8
-            if num_ecc_bits < 0: num_ecc_bits = 0
+            if num_ecc_bits < 0:
+                num_ecc_bits = 0
         target_message_bit_length = available_data_ecc_bits - num_ecc_bits
         ecc_code_for_metadata = min(int(ecc_level_percent), (2**pc.METADATA_CONFIG['ecc_level_bits'])-1)
 

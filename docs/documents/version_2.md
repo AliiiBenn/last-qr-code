@@ -239,19 +239,48 @@ last-qr-code/
 
 ---
 
+## Robustesse à la rotation et orientation : Finder Patterns différenciés
+
+### Objectif
+Garantir une robustesse maximale à la rotation (0°, 90°, 180°, 270°) et à l'orientation de la matrice, tout en simplifiant la détection et le décodage.
+
+### Principe
+- Utiliser des Finder Patterns (FP) de styles/couleurs différents dans chaque coin (par exemple, centre rouge pour TL, centre bleu pour TR, centre noir pour BL).
+- Lors du décodage, détecter les FP et identifier immédiatement leur rôle (TL, TR, BL) par leur style, sans ambiguïté.
+- Calculer l'angle de rotation comme multiple de 90° à partir de la position des FP, puis appliquer la rotation inverse pour remettre la grille droite.
+- Extraire la grille à partir du coin (0,0) sans recadrage complexe.
+
+### Avantages
+- Détection instantanée de l'orientation, même en cas de bruit ou de FP partiellement masqué.
+- Code de décodage plus simple et plus robuste (plus besoin de calculs géométriques complexes).
+- Robustesse accrue aux erreurs d'impression, de scan ou de découpage.
+- Créativité et originalité du protocole (bonus pour le rapport !).
+
+### Implémentation
+- Adapter la génération de la matrice pour donner à chaque FP un motif/couleur unique (voir src/core/matrix_layout.py et protocol_config.py).
+- Adapter la détection des FP pour reconnaître leur style (par la couleur centrale, par exemple).
+- Dans le pipeline de décodage, identifier les coins par leur style, calculer l'angle, appliquer la rotation inverse (toujours un multiple de 90°), puis lire la grille normalement.
+- Ajouter des tests d'intégration pour chaque rotation (0°, 90°, 180°, 270°) et vérifier la robustesse de la détection et du décodage.
+
+### Documentation et rapport
+- Expliquer ce choix dans le rapport, illustrer par des exemples d'images tournées et décodées avec succès.
+- Justifier la créativité et la simplicité de cette approche.
+
+---
+
 ## [RÉALISÉ] Avancement au 2024-XX-XX
 
-- **Intégration complète de Reed-Solomon (RS) pour l'ECC** :
-    - L'encodeur permet désormais de choisir entre ECC simple (checksum) et Reed-Solomon (RS) pour la correction d'erreurs.
-    - Le nombre de symboles ECC utilisés (RS) est stocké dans les métadonnées.
-    - Le pipeline de décodage détecte automatiquement le mode ECC et applique la correction RS si besoin.
-- **Robustesse accrue sur les métadonnées** :
-    - Correction de la gestion des cas sans protection (protection_bits=0).
-    - Vérification et parsing robustes des métadonnées, padding, etc.
-- **Tests unitaires** :
-    - Tous les tests unitaires passent (hors robustesse Finder Patterns, traitée ailleurs).
-    - Pipeline complet validé (encodage, décodage, ECC, RS, métadonnées).
-- **Synchronisation du code** :
-    - Toutes les modifications ont été commit et push sur le dépôt distant.
+*   **Intégration complète de Reed-Solomon (RS) pour l'ECC** :
+    *   L'encodeur permet désormais de choisir entre ECC simple (checksum) et Reed-Solomon (RS) pour la correction d'erreurs.
+    *   Le nombre de symboles ECC utilisés (RS) est stocké dans les métadonnées.
+    *   Le pipeline de décodage détecte automatiquement le mode ECC et applique la correction RS si besoin.
+*   **Robustesse accrue sur les métadonnées** :
+    *   Correction de la gestion des cas sans protection (protection_bits=0).
+    *   Vérification et parsing robustes des métadonnées, padding, etc.
+*   **Tests unitaires** :
+    *   Tous les tests unitaires passent (hors robustesse Finder Patterns, traitée ailleurs).
+    *   Pipeline complet validé (encodage, décodage, ECC, RS, métadonnées).
+*   **Synchronisation du code** :
+    *   Toutes les modifications ont été commit et push sur le dépôt distant.
 
 ---

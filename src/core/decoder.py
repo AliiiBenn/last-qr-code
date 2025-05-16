@@ -280,49 +280,38 @@ def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
         raise RuntimeError(f"Finder Patterns non détectés correctement (trouvés: {len(centers)}, candidats: {num_candidates}).")
     return centers
 
-def identify_fp_corners(centers: list[tuple[int, int]]) -> dict:
+def identify_fp_corners_by_color(image, centers, cell_px_size):
     """
-    Identifie les coins logiques (TL, TR, BL) à partir des 3 centres FP détectés.
+    Identifie les coins logiques (TL, TR, BL) à partir des 3 centres FP détectés et de la couleur centrale de chaque FP.
     Retourne un dict {'TL': (x,y), 'TR': (x,y), 'BL': (x,y)}.
-    - TL : le FP dont la somme des distances aux deux autres est la plus faible.
-    - TR/BL : déterminés par orientation (produit vectoriel).
     """
-    if len(centers) != 3:
-        raise ValueError("Il faut exactement 3 centres FP pour identifier les coins.")
-    if not all(
-        isinstance(center, tuple) and len(center) == 2 and
-        all(isinstance(coord, (int, float)) for coord in center)
-        for center in centers
-    ):
-        raise ValueError("Les centres doivent être des tuples de coordonnées (x,y).")
-    # Calculer la somme des distances pour chaque point
-    dists = []
-    for i in range(3):
-        s = 0
-        for j in range(3):
-            if i != j:
-                s += np.linalg.norm(np.array(centers[i]) - np.array(centers[j]))
-        dists.append(s)
-    tl_idx = int(np.argmin(dists))
-    TL = centers[tl_idx]
-    # Les deux autres
-    idx = [0,1,2]
-    idx.remove(tl_idx)
-    A = np.array(TL)
-    B = np.array(centers[idx[0]])
-    C = np.array(centers[idx[1]])
-    # Vecteurs
-    v1 = B - A
-    v2 = C - A
-    # Produit vectoriel (z) pour savoir qui est à droite (TR) et en bas (BL)
-    cross = np.cross(v1, v2)
-    if cross > 0:
-        TR = tuple(centers[idx[0]])
-        BL = tuple(centers[idx[1]])
-    else:
-        TR = tuple(centers[idx[1]])
-        BL = tuple(centers[idx[0]])
-    return {'TL': TL, 'TR': TR, 'BL': BL}
+    from src.core.protocol_config import FP_CONFIG
+    # Couleurs attendues
+    expected = {
+        'TL': FP_CONFIG['center_colors']['TL'],
+        'TR': FP_CONFIG['center_colors']['TR'],
+        'BL': FP_CONFIG['center_colors']['BL']
+    }
+    found = {}
+    for cx, cy in centers:
+        # Prendre le pixel central du core (core = 5x5, donc offset de 3 cellules depuis le bord du FP)
+        # FP = 7x7, core = 5x5, donc offset = 1 cellule
+        offset = int(cell_px_size * (FP_CONFIG['margin'] + FP_CONFIG['size']//2) / FP_CONFIG['size'])
+        px = int(round(cx))
+        py = int(round(cy))
+        rgb = image.getpixel((px, py))
+        # Trouver la couleur la plus proche parmi les 3 attendues
+        min_dist = float('inf')
+        best = None
+        for label, ref in expected.items():
+            dist = sum((a-b)**2 for a, b in zip(rgb, ref))
+            if dist < min_dist:
+                min_dist = dist
+                best = label
+        found[best] = (cx, cy)
+    if set(found.keys()) != {'TL','TR','BL'}:
+        raise ValueError(f"Impossible d'identifier tous les FP par couleur : trouvé {found.keys()}")
+    return found
 
 def compute_rotation_angle(fp_corners: dict) -> float:
     """
@@ -581,7 +570,10 @@ def decode_image_to_message(image_path: str) -> str:
     try:
         # Detect finder patterns
         fp_centers = detect_finder_patterns(image)
-        fp_corners = identify_fp_corners(fp_centers)
+        # Estimate cell size from FP (avant rotation)
+        cell_px_size = estimate_cell_size_from_fp({'TL': fp_centers[0], 'TR': fp_centers[1], 'BL': fp_centers[2]}, pc.MATRIX_DIM)
+        # Identifier les coins par couleur
+        fp_corners = identify_fp_corners_by_color(image, fp_centers, cell_px_size)
         # Calculate rotation and round to nearest 90°
         angle = compute_rotation_angle(fp_corners)
         angle_90 = round_angle_to_90(angle)
@@ -589,9 +581,11 @@ def decode_image_to_message(image_path: str) -> str:
             image = rotate_image(image, angle_90)
             # Re-detect finder patterns after rotation
             fp_centers = detect_finder_patterns(image)
-            fp_corners = identify_fp_corners(fp_centers)
+            # Re-estimate cell size
+            cell_px_size = estimate_cell_size_from_fp({'TL': fp_centers[0], 'TR': fp_centers[1], 'BL': fp_centers[2]}, pc.MATRIX_DIM)
+            fp_corners = identify_fp_corners_by_color(image, fp_centers, cell_px_size)
         # Estimate cell size from finder patterns
-        cell_px_size = estimate_cell_size_from_fp(fp_corners, pc.MATRIX_DIM)
+        # cell_px_size = estimate_cell_size_from_fp(fp_corners, pc.MATRIX_DIM) # déjà fait
     except Exception as e:
         # Fall back to simple parameter estimation if finder pattern detection fails
         print(f"Warning: Finder pattern detection failed: {e}. Falling back to simple estimation.")
