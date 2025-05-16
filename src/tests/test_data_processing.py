@@ -2,6 +2,7 @@ import unittest
 from unittest import mock
 import src.core.data_processing as dp
 import src.core.protocol_config as pc
+from importlib.util import find_spec
 
 class TestDataProcessing(unittest.TestCase):
 
@@ -90,34 +91,31 @@ class TestDataProcessing(unittest.TestCase):
     def test_format_metadata_bits(self):
         # Utiliser les valeurs de pc.METADATA_CONFIG pour la cohérence
         cfg = pc.METADATA_CONFIG
-        self.assertEqual(cfg['total_bits'], 72) # Assurer que la config est comme attendu par le test
-        self.assertEqual(cfg['protection_bits'], 36)
-        expected_info_len = cfg['total_bits'] - cfg['protection_bits'] # Devrait être 36
-        self.assertEqual(cfg['version_bits'] + cfg['ecc_level_bits'] + cfg['msg_len_bits'] + cfg['key_bits'], expected_info_len)
+        self.assertEqual(cfg['total_bits'], 104) # Nouvelle config : 52+52
+        self.assertEqual(cfg['protection_bits'], 52)
+        expected_info_len = cfg['total_bits'] - cfg['protection_bits'] # Devrait être 52
+        self.assertEqual(cfg['version_bits'] + cfg['ecc_level_bits'] + cfg['msg_len_bits'] + cfg['key_bits'] + cfg['orig_len_bits'], expected_info_len)
 
         # Cas de test 1: valeurs simples
         version = 1     # 0001 (4b)
         ecc_level = 2   # 0010 (4b)
         msg_len = 1024  # 010000000000 (12b)
         xor_key = "1010101010101010" # (16b)
-        # Total info bits: 4+4+12+16 = 36 bits
-        
+        orig_len_bits = 2048 # 0000100000000000 (16b)
         version_b = format(version, f'0{cfg["version_bits"]}b')
         ecc_level_b = format(ecc_level, f'0{cfg["ecc_level_bits"]}b')
         msg_len_b = format(msg_len, f'0{cfg["msg_len_bits"]}b')
-        
-        info_bits_str = version_b + ecc_level_b + msg_len_b + xor_key
+        orig_len_b = format(orig_len_bits, '016b')
+        info_bits_str = version_b + ecc_level_b + msg_len_b + xor_key + orig_len_b
         self.assertEqual(len(info_bits_str), expected_info_len)
-        
         # Protection par répétition
         expected_metadata = info_bits_str + info_bits_str 
         self.assertEqual(len(expected_metadata), cfg['total_bits'])
-        
-        self.assertEqual(dp.format_metadata_bits(version, ecc_level, msg_len, xor_key), expected_metadata)
+        self.assertEqual(dp.format_metadata_bits(version, ecc_level, msg_len, xor_key, orig_len_bits), expected_metadata)
 
         # Cas où la clé XOR a une mauvaise longueur
         with self.assertRaises(ValueError):
-            dp.format_metadata_bits(version, ecc_level, msg_len, "101") # Clé trop courte
+            dp.format_metadata_bits(version, ecc_level, msg_len, "101", orig_len_bits) # Clé trop courte
 
         # Test avec une configuration où protection_bits = 0 (si on la changeait temporairement)
         original_protection_bits = cfg['protection_bits']
@@ -127,7 +125,7 @@ class TestDataProcessing(unittest.TestCase):
         try:
             expected_no_protection_metadata = info_bits_str
             self.assertEqual(len(expected_no_protection_metadata), cfg['total_bits'])
-            self.assertEqual(dp.format_metadata_bits(version, ecc_level, msg_len, xor_key), expected_no_protection_metadata)
+            self.assertEqual(dp.format_metadata_bits(version, ecc_level, msg_len, xor_key, orig_len_bits), expected_no_protection_metadata)
         finally:
             # Restaurer la config originale pour ne pas affecter d'autres tests
             cfg['protection_bits'] = original_protection_bits
@@ -139,7 +137,7 @@ class TestDataProcessing(unittest.TestCase):
         cfg['total_bits'] = expected_info_len + 10
         try:
             with self.assertRaises(NotImplementedError):
-                dp.format_metadata_bits(version, ecc_level, msg_len, xor_key)
+                dp.format_metadata_bits(version, ecc_level, msg_len, xor_key, orig_len_bits)
         finally:
             cfg['protection_bits'] = original_protection_bits
             cfg['total_bits'] = original_total_bits
@@ -149,18 +147,20 @@ class TestDecoderDataProcessing(unittest.TestCase):
     def setUp(self):
         self.cfg = pc.METADATA_CONFIG
         self.version = 1
-        self.ecc_level_code = 3
-        self.msg_len = 128
-        self.xor_key = '1100110011001100' # 16 bits as per default config
+        self.ecc_level_code = 2
+        self.msg_len = 1024
+        self.xor_key = '1010101010101010' # 16 bits as per default config
+        self.orig_len_bits = 2048
 
         self.info_block = (
             format(self.version, f"0{self.cfg['version_bits']}b") +
             format(self.ecc_level_code, f"0{self.cfg['ecc_level_bits']}b") +
             format(self.msg_len, f"0{self.cfg['msg_len_bits']}b") +
-            self.xor_key
+            self.xor_key +
+            format(self.orig_len_bits, '016b')
         )
         # Assuming simple repetition protection as per default METADATA_CONFIG
-        self.valid_metadata_stream = self.info_block + self.info_block
+        self.valid_metadata_stream = self.info_block * 2  # 52*2=104 bits
         self.assertEqual(len(self.info_block), self.cfg['total_bits'] - self.cfg['protection_bits'])
         self.assertEqual(len(self.valid_metadata_stream), self.cfg['total_bits'])
 
@@ -170,6 +170,7 @@ class TestDecoderDataProcessing(unittest.TestCase):
         self.assertEqual(parsed['ecc_level_code'], self.ecc_level_code)
         self.assertEqual(parsed['message_encrypted_len'], self.msg_len)
         self.assertEqual(parsed['xor_key'], self.xor_key)
+        self.assertEqual(parsed['message_original_len_bits'], self.orig_len_bits)
 
     def test_parse_metadata_bits_invalid_length(self):
         with self.assertRaisesRegex(ValueError, "Metadata stream length is incorrect"):
@@ -226,16 +227,18 @@ class TestDecoderDataProcessing(unittest.TestCase):
     def test_parse_metadata_bits_no_protection_config(self):
         cfg_no_protection = {
             'version_bits': 6, 'ecc_level_bits': 4, 'msg_len_bits': 10, 'key_bits': 16,
+            'orig_len_bits': 16,
             'protection_bits': 0,
-            'total_bits': 6 + 4 + 10 + 16 # 36
+            'total_bits': 6 + 4 + 10 + 16 + 16 # 52
         }
         
-        v, e, m, k = 1, 2, 50, '01'*8
+        v, e, m, k, orig_len = 1, 2, 50, '01'*8, 1234
         stream_no_protection = (
             format(v, f"0{cfg_no_protection['version_bits']}b") +
             format(e, f"0{cfg_no_protection['ecc_level_bits']}b") +
             format(m, f"0{cfg_no_protection['msg_len_bits']}b") +
-            k
+            k +
+            format(orig_len, '016b')
         )
         self.assertEqual(len(stream_no_protection), cfg_no_protection['total_bits'])
 
@@ -245,6 +248,7 @@ class TestDecoderDataProcessing(unittest.TestCase):
             self.assertEqual(parsed['ecc_level_code'], e)
             self.assertEqual(parsed['message_encrypted_len'], m)
             self.assertEqual(parsed['xor_key'], k)
+            self.assertEqual(parsed['message_original_len_bits'], orig_len)
             
     def test_parse_metadata_bits_info_block_len_zero_or_negative(self):
         bad_cfg = self.cfg.copy()
@@ -298,32 +302,32 @@ class TestDecoderDataProcessing(unittest.TestCase):
     def test_padded_bits_to_text_basic(self):
         text = "Hello World!"
         padded_bits = dp.text_to_padded_bits(text, len(text.encode('utf-8')) * 8 + 16) # Add 16 bits of '0' padding
-        self.assertEqual(dp.padded_bits_to_text(padded_bits), text)
+        self.assertEqual(dp.padded_bits_to_text(padded_bits, original_bit_length=len(text.encode('utf-8'))*8), text)
 
     def test_padded_bits_to_text_exact_length_no_padding_needed(self):
         text = "Test"
         text_bits = "".join(format(b, '08b') for b in text.encode('utf-8'))
         # Pass bits that are an exact multiple of 8 and represent the text
-        self.assertEqual(dp.padded_bits_to_text(text_bits), text)
+        self.assertEqual(dp.padded_bits_to_text(text_bits, original_bit_length=len(text.encode('utf-8'))*8), text)
 
     def test_padded_bits_to_text_with_actual_null_chars_in_padding(self):
         text = "Bonjour"
         text_bits = "".join(format(b, '08b') for b in text.encode('utf-8'))
         # Pad with bits that happen to form null characters
         padded_with_nulls = text_bits + "00000000" + "00000000" # Two null bytes
-        self.assertEqual(dp.padded_bits_to_text(padded_with_nulls), text)
+        self.assertEqual(dp.padded_bits_to_text(padded_with_nulls, original_bit_length=len(text.encode('utf-8'))*8), text)
 
     def test_padded_bits_to_text_with_internal_null_chars(self):
         text_with_internal_null = "Hello\x00World"
         # text_to_padded_bits will preserve internal nulls
         padded_bits = dp.text_to_padded_bits(text_with_internal_null, 128) 
-        self.assertEqual(dp.padded_bits_to_text(padded_bits), text_with_internal_null)
+        self.assertEqual(dp.padded_bits_to_text(padded_bits, original_bit_length=len(text_with_internal_null.encode('utf-8'))*8), text_with_internal_null)
 
     def test_padded_bits_to_text_empty_string(self):
-        self.assertEqual(dp.padded_bits_to_text(""), "")
+        self.assertEqual(dp.padded_bits_to_text("", original_bit_length=0), "")
         # Test with padding
         padded_empty = dp.text_to_padded_bits("", 16) # Should be "0"*16
-        self.assertEqual(dp.padded_bits_to_text(padded_empty), "")
+        self.assertEqual(dp.padded_bits_to_text(padded_empty, original_bit_length=0), "")
 
     def test_padded_bits_to_text_invalid_utf8(self):
         # 0xC0 0x80 is an overlong encoding of U+0000, invalid.
@@ -331,22 +335,22 @@ class TestDecoderDataProcessing(unittest.TestCase):
         # 0xF0 0x80 0x80 (missing one continuation byte) - incomplete sequence
         invalid_bits_incomplete_seq = "11110000" + "10000000" + "10000000" # F0 80 80
         with self.assertRaisesRegex(ValueError, "Failed to decode bits to UTF-8 text"):
-            dp.padded_bits_to_text(invalid_bits_incomplete_seq)
+            dp.padded_bits_to_text(invalid_bits_incomplete_seq, original_bit_length=24)
 
         # 0xFF is not a valid start byte in UTF-8
         invalid_bits_bad_start = "11111111"
         with self.assertRaisesRegex(ValueError, "Failed to decode bits to UTF-8 text"):
-            dp.padded_bits_to_text(invalid_bits_bad_start)
+            dp.padded_bits_to_text(invalid_bits_bad_start, original_bit_length=8)
             
         # Valid start of 2-byte seq (e.g. C2), but invalid continuation byte (e.g. not 10xxxxxx)
         invalid_bits_bad_continuation = "11000010" + "01000000" # C2 40
         with self.assertRaisesRegex(ValueError, "Failed to decode bits to UTF-8 text"):
-            dp.padded_bits_to_text(invalid_bits_bad_continuation)
+            dp.padded_bits_to_text(invalid_bits_bad_continuation, original_bit_length=16)
 
     def test_padded_bits_to_text_multibyte_chars(self):
         text = "Résumé Test 😊" # Includes accented char and emoji
         padded_bits = dp.text_to_padded_bits(text, len(text.encode('utf-8')) * 8 + 24)
-        self.assertEqual(dp.padded_bits_to_text(padded_bits), text)
+        self.assertEqual(dp.padded_bits_to_text(padded_bits, original_bit_length=len(text.encode('utf-8'))*8), text)
         
     def test_padded_bits_to_text_trailing_incomplete_byte(self):
         text = "Hi"
@@ -354,10 +358,66 @@ class TestDecoderDataProcessing(unittest.TestCase):
         # Add some bits that don't form a full byte at the end
         bits_with_trailing = text_bits + "0101"
         # padded_bits_to_text should ignore the trailing incomplete byte
-        self.assertEqual(dp.padded_bits_to_text(bits_with_trailing), text)
+        self.assertEqual(dp.padded_bits_to_text(bits_with_trailing, original_bit_length=len(text.encode('utf-8'))*8), text)
         
         # Test with only an incomplete byte
-        self.assertEqual(dp.padded_bits_to_text("10101"), "")
+        self.assertEqual(dp.padded_bits_to_text("10101", original_bit_length=0), "")
+
+
+class TestReedSolomonECC(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        try:
+            cls.reedsolo_available = find_spec("reedsolo") is not None
+        except ImportError:
+            cls.reedsolo_available = False
+
+    def setUp(self):
+        if not self.reedsolo_available:
+            self.skipTest("reedsolo n'est pas installé")
+
+    def test_calculate_reed_solomon_ecc_length(self):
+        data_bits = '10101010' * 4  # 32 bits (4 octets)
+        num_ecc_symbols = 4
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits, num_ecc_symbols)
+        self.assertEqual(len(ecc_bits), num_ecc_symbols * 8)
+
+    def test_rs_encode_decode_no_error(self):
+        data_bits = '11001100' * 8  # 64 bits (8 octets)
+        num_ecc_symbols = 8
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits, num_ecc_symbols)
+        message_plus_ecc = data_bits + ecc_bits
+        is_valid, corrected = dp.verify_and_correct_reed_solomon_ecc(message_plus_ecc, num_ecc_symbols)
+        self.assertTrue(is_valid)
+        # Les bits de data peuvent être paddés à la fin, donc on compare le début
+        self.assertTrue(corrected.startswith(data_bits))
+
+    def test_rs_correct_single_error(self):
+        data_bits = '11110000' * 8  # 64 bits
+        num_ecc_symbols = 8
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits, num_ecc_symbols)
+        message_plus_ecc = list(data_bits + ecc_bits)
+        # Introduire une erreur sur un bit dans le premier octet
+        message_plus_ecc[3] = '1' if message_plus_ecc[3] == '0' else '0'
+        corrupted = ''.join(message_plus_ecc)
+        is_valid, corrected = dp.verify_and_correct_reed_solomon_ecc(corrupted, num_ecc_symbols)
+        self.assertTrue(is_valid)
+        self.assertTrue(corrected.startswith(data_bits))
+
+    def test_rs_too_many_errors(self):
+        data_bits = '10101010' * 8  # 64 bits
+        num_ecc_symbols = 8
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits, num_ecc_symbols)
+        message_plus_ecc = list(data_bits + ecc_bits)
+        # Injecter des erreurs sur 5 octets entiers (soit 5*8=40 bits), ce qui dépasse la capacité de correction (t=4)
+        for octet in range(5):
+            start = octet * 8
+            for i in range(start, start + 8):
+                message_plus_ecc[i] = '1' if message_plus_ecc[i] == '0' else '0'
+        corrupted = ''.join(message_plus_ecc)
+        is_valid, corrected = dp.verify_and_correct_reed_solomon_ecc(corrupted, num_ecc_symbols)
+        self.assertFalse(is_valid)
+        self.assertIsNone(corrected)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,21 @@
 # PLAN DE DÉVELOPPEMENT - PROTOCOLE GRAPHIQUE V2
 
+## [AVANCEMENT 2024-XX-XX]
+
+- **Pipeline encodeur → image → décodage parfaitement fonctionnel** :
+    - Le message encodé est restitué à l'identique après passage par l'image (aucune perte ni corruption).
+    - La détection des Finder Patterns (FP) par couleur est robuste : chaque coin est identifié sans ambiguïté (rouge, bleu, noir).
+    - La quiet zone (bordure blanche) et les marges autour des FP sont respectées, assurant une détection fiable.
+    - La zone METADATA est lue et vérifiée sans erreur (protection bits OK).
+    - Tous les tests unitaires passent (remplissage complet de la matrice, encodage/décodage, robustesse binaire).
+    - Le pipeline bits→image→bits est strictement fidèle (mapping couleur→bits exact).
+- **Calibration couleur dynamique** :
+    - Le pipeline fonctionne en mode bypass (mapping couleur→bits exact). La calibration dynamique CCP reste à réactiver et tester pour la robustesse en conditions réelles (légères dérives de couleur, bruit, etc).
+- **Prochaines étapes** :
+    - Réactiver la calibration dynamique CCP et valider la robustesse sur images bruitées ou altérées.
+    - Tester la robustesse à la rotation, au bruit, à la perspective, et sur différentes tailles de matrice.
+    - Finaliser la CLI et la documentation.
+
 ## 1. Introduction et Objectifs de la V2
 
 La Version 1 (V1) de notre protocole graphique a établi les fondations pour l'encodage et le décodage de messages texte en images. La Version 2 (V2) vise à significativement améliorer la robustesse, la flexibilité et les fonctionnalités du protocole, en s'appuyant sur les apprentissages de la V1 et en intégrant des techniques plus avancées.
@@ -54,6 +70,48 @@ last-qr-code/
 │   └── rapport_protocole_graphique_v2.pdf # Nom du rapport mis à jour
 └── # ... (autres fichiers comme README.md, requirements.txt)
 ```
+
+## 3.bis. Robustesse visuelle : Quiet Zone, Marges et Finder Patterns
+
+Pour garantir une détection fiable des Finder Patterns (FP) et une robustesse maximale du décodage, le protocole V2 adopte les principes suivants, inspirés des standards du QR code :
+
+### 1. Quiet Zone (Zone Silencieuse)
+- **Définition** : Une bordure blanche (ou d'une couleur neutre) de 2 à 4 cellules tout autour de la matrice.
+- **But** : Isoler la matrice du fond de l'image ou d'autres éléments graphiques, facilitant la détection automatique du code.
+- **Implémentation** :
+    - La génération d'image ajoute une marge blanche autour de la matrice (paramètre `margin_px` dans `create_protocol_image`).
+    - Cette zone n'est jamais utilisée pour encoder des données ou des motifs fixes.
+
+### 2. Marges internes autour des Finder Patterns
+- **Définition** : Un coussin de cellules blanches (ou d'une couleur neutre) autour de chaque FP, à l'intérieur de la matrice.
+- **But** : Empêcher les données d'empiéter sur les FP, rendant leur détection plus fiable même si la matrice est dense.
+- **Implémentation** :
+    - La valeur de `FP_CONFIG['margin']` est augmentée (ex : 2 au lieu de 1).
+    - Les coordonnées des FP, TP, CCP, METADATA, etc., sont recalculées pour respecter cette marge.
+    - Les tests unitaires vérifient que les marges sont bien respectées.
+
+### 3. Motifs FP distinctifs et robustes
+- **Définition** : Utilisation de couleurs centrales uniques et d'anneaux concentriques pour chaque FP.
+- **But** : Permettre une détection algorithmique fiable, même en cas de bruit, de rotation ou de forte densité de données.
+- **Implémentation** :
+    - Chaque FP a une couleur centrale unique (ex : rouge, bleu, noir).
+    - Les anneaux concentriques sont générés selon le schéma défini dans `FP_CONFIG`.
+    - La détection FP s'appuie sur la couleur centrale pour identifier chaque coin.
+
+### 4. Impact sur la détection et le décodage
+- **La quiet zone** protège contre les interférences extérieures (bord de page, autres graphismes).
+- **La marge FP** protège contre les interférences internes (données trop proches).
+- **Le motif FP distinctif** rend la détection algorithmique plus fiable, même en cas de rotation, bruit, ou perspective.
+
+### 5. Tests de robustesse
+- Génération d'images avec différents niveaux de bruit, de rotation, de densité de données.
+- Vérification systématique que les FP sont toujours détectés et que le décodage fonctionne.
+- Ajout de tests d'intégration automatisés pour ces cas.
+
+### 6. Bonus : Adaptation dynamique
+- Permettre de configurer dynamiquement la taille de la quiet zone et des marges FP selon la densité des données ou le niveau de robustesse souhaité.
+
+---
 
 ## 4. Phases de Développement V2
 
@@ -236,5 +294,51 @@ last-qr-code/
         *   Une évaluation des performances (capacité de données, robustesse).
     *   **Nettoyage du Code :** Refactoring final, suppression du code mort, vérification du style de code.
 *   **Impact sur les Modules :** Principalement documentaire, mais peut entraîner des petites retouches de code.
+
+---
+
+## Robustesse à la rotation et orientation : Finder Patterns différenciés
+
+### Objectif
+Garantir une robustesse maximale à la rotation (0°, 90°, 180°, 270°) et à l'orientation de la matrice, tout en simplifiant la détection et le décodage.
+
+### Principe
+- Utiliser des Finder Patterns (FP) de styles/couleurs différents dans chaque coin (par exemple, centre rouge pour TL, centre bleu pour TR, centre noir pour BL).
+- Lors du décodage, détecter les FP et identifier immédiatement leur rôle (TL, TR, BL) par leur style, sans ambiguïté.
+- Calculer l'angle de rotation comme multiple de 90° à partir de la position des FP, puis appliquer la rotation inverse pour remettre la grille droite.
+- Extraire la grille à partir du coin (0,0) sans recadrage complexe.
+
+### Avantages
+- Détection instantanée de l'orientation, même en cas de bruit ou de FP partiellement masqué.
+- Code de décodage plus simple et plus robuste (plus besoin de calculs géométriques complexes).
+- Robustesse accrue aux erreurs d'impression, de scan ou de découpage.
+- Créativité et originalité du protocole (bonus pour le rapport !).
+
+### Implémentation
+- Adapter la génération de la matrice pour donner à chaque FP un motif/couleur unique (voir src/core/matrix_layout.py et protocol_config.py).
+- Adapter la détection des FP pour reconnaître leur style (par la couleur centrale, par exemple).
+- Dans le pipeline de décodage, identifier les coins par leur style, calculer l'angle, appliquer la rotation inverse (toujours un multiple de 90°), puis lire la grille normalement.
+- Ajouter des tests d'intégration pour chaque rotation (0°, 90°, 180°, 270°) et vérifier la robustesse de la détection et du décodage.
+
+### Documentation et rapport
+- Expliquer ce choix dans le rapport, illustrer par des exemples d'images tournées et décodées avec succès.
+- Justifier la créativité et la simplicité de cette approche.
+
+---
+
+## [RÉALISÉ] Avancement au 2024-XX-XX
+
+*   **Intégration complète de Reed-Solomon (RS) pour l'ECC** :
+    *   L'encodeur permet désormais de choisir entre ECC simple (checksum) et Reed-Solomon (RS) pour la correction d'erreurs.
+    *   Le nombre de symboles ECC utilisés (RS) est stocké dans les métadonnées.
+    *   Le pipeline de décodage détecte automatiquement le mode ECC et applique la correction RS si besoin.
+*   **Robustesse accrue sur les métadonnées** :
+    *   Correction de la gestion des cas sans protection (protection_bits=0).
+    *   Vérification et parsing robustes des métadonnées, padding, etc.
+*   **Tests unitaires** :
+    *   Tous les tests unitaires passent (hors robustesse Finder Patterns, traitée ailleurs).
+    *   Pipeline complet validé (encodage, décodage, ECC, RS, métadonnées).
+*   **Synchronisation du code** :
+    *   Toutes les modifications ont été commit et push sur le dépôt distant.
 
 ---
