@@ -298,32 +298,32 @@ class TestDecoderDataProcessing(unittest.TestCase):
     def test_padded_bits_to_text_basic(self):
         text = "Hello World!"
         padded_bits = dp.text_to_padded_bits(text, len(text.encode('utf-8')) * 8 + 16) # Add 16 bits of '0' padding
-        self.assertEqual(dp.padded_bits_to_text(padded_bits), text)
+        self.assertEqual(dp.padded_bits_to_text(padded_bits, original_bit_length=len(text.encode('utf-8'))*8), text)
 
     def test_padded_bits_to_text_exact_length_no_padding_needed(self):
         text = "Test"
         text_bits = "".join(format(b, '08b') for b in text.encode('utf-8'))
         # Pass bits that are an exact multiple of 8 and represent the text
-        self.assertEqual(dp.padded_bits_to_text(text_bits), text)
+        self.assertEqual(dp.padded_bits_to_text(text_bits, original_bit_length=len(text.encode('utf-8'))*8), text)
 
     def test_padded_bits_to_text_with_actual_null_chars_in_padding(self):
         text = "Bonjour"
         text_bits = "".join(format(b, '08b') for b in text.encode('utf-8'))
         # Pad with bits that happen to form null characters
         padded_with_nulls = text_bits + "00000000" + "00000000" # Two null bytes
-        self.assertEqual(dp.padded_bits_to_text(padded_with_nulls), text)
+        self.assertEqual(dp.padded_bits_to_text(padded_with_nulls, original_bit_length=len(text.encode('utf-8'))*8), text)
 
     def test_padded_bits_to_text_with_internal_null_chars(self):
         text_with_internal_null = "Hello\x00World"
         # text_to_padded_bits will preserve internal nulls
         padded_bits = dp.text_to_padded_bits(text_with_internal_null, 128) 
-        self.assertEqual(dp.padded_bits_to_text(padded_bits), text_with_internal_null)
+        self.assertEqual(dp.padded_bits_to_text(padded_bits, original_bit_length=len(text_with_internal_null.encode('utf-8'))*8), text_with_internal_null)
 
     def test_padded_bits_to_text_empty_string(self):
-        self.assertEqual(dp.padded_bits_to_text(""), "")
+        self.assertEqual(dp.padded_bits_to_text("", original_bit_length=0), "")
         # Test with padding
         padded_empty = dp.text_to_padded_bits("", 16) # Should be "0"*16
-        self.assertEqual(dp.padded_bits_to_text(padded_empty), "")
+        self.assertEqual(dp.padded_bits_to_text(padded_empty, original_bit_length=0), "")
 
     def test_padded_bits_to_text_invalid_utf8(self):
         # 0xC0 0x80 is an overlong encoding of U+0000, invalid.
@@ -331,22 +331,22 @@ class TestDecoderDataProcessing(unittest.TestCase):
         # 0xF0 0x80 0x80 (missing one continuation byte) - incomplete sequence
         invalid_bits_incomplete_seq = "11110000" + "10000000" + "10000000" # F0 80 80
         with self.assertRaisesRegex(ValueError, "Failed to decode bits to UTF-8 text"):
-            dp.padded_bits_to_text(invalid_bits_incomplete_seq)
+            dp.padded_bits_to_text(invalid_bits_incomplete_seq, original_bit_length=24)
 
         # 0xFF is not a valid start byte in UTF-8
         invalid_bits_bad_start = "11111111"
         with self.assertRaisesRegex(ValueError, "Failed to decode bits to UTF-8 text"):
-            dp.padded_bits_to_text(invalid_bits_bad_start)
+            dp.padded_bits_to_text(invalid_bits_bad_start, original_bit_length=8)
             
         # Valid start of 2-byte seq (e.g. C2), but invalid continuation byte (e.g. not 10xxxxxx)
         invalid_bits_bad_continuation = "11000010" + "01000000" # C2 40
         with self.assertRaisesRegex(ValueError, "Failed to decode bits to UTF-8 text"):
-            dp.padded_bits_to_text(invalid_bits_bad_continuation)
+            dp.padded_bits_to_text(invalid_bits_bad_continuation, original_bit_length=16)
 
     def test_padded_bits_to_text_multibyte_chars(self):
         text = "Résumé Test 😊" # Includes accented char and emoji
         padded_bits = dp.text_to_padded_bits(text, len(text.encode('utf-8')) * 8 + 24)
-        self.assertEqual(dp.padded_bits_to_text(padded_bits), text)
+        self.assertEqual(dp.padded_bits_to_text(padded_bits, original_bit_length=len(text.encode('utf-8'))*8), text)
         
     def test_padded_bits_to_text_trailing_incomplete_byte(self):
         text = "Hi"
@@ -354,10 +354,10 @@ class TestDecoderDataProcessing(unittest.TestCase):
         # Add some bits that don't form a full byte at the end
         bits_with_trailing = text_bits + "0101"
         # padded_bits_to_text should ignore the trailing incomplete byte
-        self.assertEqual(dp.padded_bits_to_text(bits_with_trailing), text)
+        self.assertEqual(dp.padded_bits_to_text(bits_with_trailing, original_bit_length=len(text.encode('utf-8'))*8), text)
         
         # Test with only an incomplete byte
-        self.assertEqual(dp.padded_bits_to_text("10101"), "")
+        self.assertEqual(dp.padded_bits_to_text("10101", original_bit_length=0), "")
 
 
 class TestReedSolomonECC(unittest.TestCase):

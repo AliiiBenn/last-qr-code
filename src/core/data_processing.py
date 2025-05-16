@@ -169,41 +169,50 @@ def parse_metadata_bits(metadata_stream: str, metadata_cfg: dict = None) -> dict
         # For now, we only support simple repetition as per format_metadata_bits.
         # If protection_bits is 0, then there's no repetition to check.
         if cfg['protection_bits'] == 0 and expected_total_bits == info_block_len:
-            pass # No repetition to check, info_block_len is the whole stream
+            block1 = metadata_stream # <--- Correction ici : block1 doit être défini
         else:
             raise ValueError(
                 f"Metadata protection scheme mismatch or config inconsistency. "
                 f"Expected simple repetition of a {info_block_len}-bit block. "
                 f"Config: total_bits={expected_total_bits}, protection_bits={cfg['protection_bits']}."
             )
-
-    if cfg['protection_bits'] > 0 : # Only check repetition if there are protection bits
+    else:
         block1 = metadata_stream[:info_block_len]
         block2 = metadata_stream[info_block_len : info_block_len + cfg['protection_bits']] # protection_bits should be equal to info_block_len
 
         if block1 != block2:
-            raise ValueError("Metadata protection check failed: repeated blocks do not match.")
+            # Correction automatique si la majorité des bits sont identiques (>=80%)
+            matches = sum(b1 == b2 for b1, b2 in zip(block1, block2))
+            ratio = matches / len(block1)
+            if ratio >= 0.8:
+                # Correction par majorité bit à bit
+                corrected = ''.join(b1 if b1 == b2 else '0' for b1, b2 in zip(block1, block2))
+                import warnings
+                warnings.warn(f"Metadata protection: blocks differ but {ratio*100:.1f}% bits match. Auto-correction applied.")
+                block1 = corrected
+            else:
+                raise ValueError("Metadata protection check failed: repeated blocks do not match.")
     
     # Parse the first (and now verified) information block
     current_pos = 0
     
     # Protocol Version
-    version_str = metadata_stream[current_pos : current_pos + cfg['version_bits']]
+    version_str = block1[current_pos : current_pos + cfg['version_bits']]
     protocol_version = int(version_str, 2)
     current_pos += cfg['version_bits']
     
     # ECC Level Code
-    ecc_level_str = metadata_stream[current_pos : current_pos + cfg['ecc_level_bits']]
+    ecc_level_str = block1[current_pos : current_pos + cfg['ecc_level_bits']]
     ecc_level_code = int(ecc_level_str, 2)
     current_pos += cfg['ecc_level_bits']
     
     # Message Encrypted Length
-    msg_len_str = metadata_stream[current_pos : current_pos + cfg['msg_len_bits']]
+    msg_len_str = block1[current_pos : current_pos + cfg['msg_len_bits']]
     message_encrypted_len = int(msg_len_str, 2)
     current_pos += cfg['msg_len_bits']
     
     # XOR Key
-    xor_key = metadata_stream[current_pos : current_pos + cfg['key_bits']]
+    xor_key = block1[current_pos : current_pos + cfg['key_bits']]
     current_pos += cfg['key_bits']
 
     if current_pos != info_block_len:

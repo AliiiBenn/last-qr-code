@@ -158,10 +158,15 @@ class TestFinderPatternDetection(unittest.TestCase):
         calibration_map = decoder.perform_color_calibration(img_redress, int(round(cell_size_est)))
         # 9. Extraction de la grille
         bit_matrix2 = decoder.extract_bit_matrix_from_rotated_image(
-            img_redress, corners2, cell_size_est, matrix_dim, calibration_map)
+            img_redress, corners2, cell_size_est, matrix_dim, calibration_map, sampling_window=4)
         # 10. Décodage (pipeline normal)
         metadata_stream = decoder.extract_metadata_stream(bit_matrix2)
         payload_stream = decoder.extract_payload_stream(bit_matrix2)
+        info_block_len = decoder.dp.pc.METADATA_CONFIG['total_bits'] - decoder.dp.pc.METADATA_CONFIG['protection_bits']
+        with open('debug_metadata.txt', 'w') as dbg:
+            dbg.write(f"metadata_stream: {metadata_stream}\n")
+            dbg.write(f"info_block: {metadata_stream[:info_block_len]}\n")
+            dbg.write(f"protection_block: {metadata_stream[info_block_len:info_block_len*2]}\n")
         parsed_metadata = decoder.dp.parse_metadata_bits(metadata_stream)
         encrypted_message_bits = payload_stream[:parsed_metadata['message_encrypted_len']]
         received_ecc_bits = payload_stream[parsed_metadata['message_encrypted_len']:]

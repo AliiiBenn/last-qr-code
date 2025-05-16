@@ -10,10 +10,11 @@ def bits_to_rgb(bits_pair: str):
         return pc.BLACK # Retourner une couleur par défaut ou lever une erreur
     return pc.BITS_TO_COLOR_MAP[bits_pair]
 
-def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str):
+def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str, margin_px: int = 0):
     """
     Crée une image graphique du protocole à partir de la bit_matrix.
     Sauvegarde l'image dans output_filename.
+    Ajoute une marge blanche de margin_px pixels autour de la grille si margin_px > 0.
     """
     if not bit_matrix or not bit_matrix[0]:
         raise ValueError("bit_matrix is empty or invalid.")
@@ -21,8 +22,8 @@ def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str
     matrix_height = len(bit_matrix)
     matrix_width = len(bit_matrix[0])
     
-    image_width = matrix_width * cell_pixel_size
-    image_height = matrix_height * cell_pixel_size
+    image_width = matrix_width * cell_pixel_size + 2 * margin_px
+    image_height = matrix_height * cell_pixel_size + 2 * margin_px
     
     image = Image.new("RGB", (image_width, image_height), pc.WHITE) # Fond blanc par défaut
     draw = ImageDraw.Draw(image)
@@ -39,9 +40,9 @@ def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str
             else:
                 color_rgb = bits_to_rgb(bits_pair)
             
-            # Coordonnées du rectangle pour la cellule
-            x0 = c * cell_pixel_size
-            y0 = r * cell_pixel_size
+            # Coordonnées du rectangle pour la cellule (avec marge)
+            x0 = c * cell_pixel_size + margin_px
+            y0 = r * cell_pixel_size + margin_px
             x1 = x0 + cell_pixel_size
             y1 = y0 + cell_pixel_size
             

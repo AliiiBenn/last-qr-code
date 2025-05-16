@@ -236,7 +236,7 @@ def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
       - Convertit en niveaux de gris, seuillage Otsu (plus robuste).
       - Cherche les 3 plus grands carrés noirs/blancs (motif FP) par analyse de blocs.
       - Retourne les centres (x, y) en pixels.
-    Plus tolérant aux artefacts de rotation.
+    Plus tolérant aux artefacts de rotation et d'interpolation.
     """
     # Convertir en niveaux de gris
     gray = image.convert('L')
@@ -248,26 +248,32 @@ def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
         # fallback: simple mean
         thresh = arr.mean()
         binary = (arr < thresh).astype(np.uint8)
+    # (DEBUG) Sauvegarder l'image seuillée si besoin
+    # from PIL import Image as PILImage
+    # PILImage.fromarray((binary*255).astype(np.uint8)).save('debug_fp_thresh.png')
     # Chercher les plus grands carrés noirs (FP core)
     labeled, num = label(binary)
     objects = find_objects(labeled)
     h, w = arr.shape
-    min_size = min(h, w) * 0.10  # plus tolérant (avant: 0.12)
+    min_size = min(h, w) * 0.04  # encore plus tolérant (avant: 0.07)
+    max_aspect_ratio = 3.0  # tolère des rectangles jusqu'à 3:1
     candidates = []
     for _, sl in enumerate(objects):
         if sl is None:
             continue
         y0, y1 = sl[0].start, sl[0].stop
         x0, x1 = sl[1].start, sl[1].stop
-        # Tolérance accrue sur la forme carrée
-        if (y1 - y0) >= min_size and (x1 - x0) >= min_size and abs((y1 - y0) - (x1 - x0)) < min_size:
+        height = y1 - y0
+        width = x1 - x0
+        aspect = max(width / height, height / width) if min(width, height) > 0 else 0
+        # Tolérance accrue sur la forme et la taille
+        if (height >= min_size and width >= min_size and aspect <= max_aspect_ratio):
             # Calculer le centre
             cx = (x0 + x1) // 2
             cy = (y0 + y1) // 2
-            candidates.append(((cx, cy), (x1 - x0) * (y1 - y0)))
+            candidates.append(((cx, cy), width * height))
     # Garder les 3 plus grands
     candidates.sort(key=lambda tup: -tup[1])
-    # Diagnostic info that could be logged
     num_candidates = len(candidates)
     centers = [c[0] for c in candidates[:3]]
     if len(centers) != 3:
@@ -339,9 +345,10 @@ def rotate_image(image: Image.Image, angle: float) -> Image.Image:
     Tourne l'image de l'angle donné (en degrés, sens trigo) autour de son centre.
     - angle > 0 : sens anti-horaire (trigo)
     - angle < 0 : sens horaire
-    Retourne une nouvelle image PIL de même taille.
+    Retourne une nouvelle image PIL de taille ajustée (expand=True pour ne rien couper).
     """
-    return image.rotate(-angle, resample=Image.BICUBIC, expand=False, center=(image.width//2, image.height//2))
+    # Utiliser expand=True pour éviter de couper les FP lors de la rotation
+    return image.rotate(-angle, resample=Image.BICUBIC, expand=True, center=(image.width//2, image.height//2))
 
 def estimate_cell_size_from_fp(fp_corners: dict, matrix_dim: int) -> float:
     """
@@ -643,7 +650,7 @@ def decode_image_to_message(image_path: str) -> str:
     
     # Convert to text
     try:
-        final_message = dp.padded_bits_to_text(padded_message_bits)
+        final_message = dp.padded_bits_to_text(padded_message_bits, original_bit_length=len(encrypted_message_bits))
     except ValueError as e: # e.g. UTF-8 decoding error
         raise ValueError(f"Decoder: Error converting bits to text. Data may be corrupted or not valid text. Details: {e}")
         
