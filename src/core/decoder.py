@@ -6,6 +6,7 @@ import src.core.data_processing as dp
 import numpy as np
 from scipy.ndimage import label, find_objects
 import cv2
+import itertools
 
 def estimate_image_parameters(image: Image.Image) -> int:
     """
@@ -241,22 +242,24 @@ def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
     # Convertir en niveaux de gris
     gray = image.convert('L')
     arr = np.array(gray)
+    # Appliquer un filtre médian pour réduire le bruit avant le seuillage
+    arr_filtered = cv2.medianBlur(arr, 5) # Kernel size 5x5, doit être impair
     # Seuillage Otsu (plus robuste que la moyenne)
     try:
-        _, binary = cv2.threshold(arr, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        _, binary = cv2.threshold(arr_filtered, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     except ImportError:
         # fallback: simple mean
-        thresh = arr.mean()
-        binary = (arr < thresh).astype(np.uint8)
+        thresh = arr_filtered.mean()
+        binary = (arr_filtered < thresh).astype(np.uint8)
     # (DEBUG) Sauvegarder l'image seuillée si besoin
-    # from PIL import Image as PILImage
-    # PILImage.fromarray((binary*255).astype(np.uint8)).save('debug_fp_thresh.png')
+    from PIL import Image as PILImage
+    PILImage.fromarray((binary*255).astype(np.uint8)).save('debug_fp_binary_otsu.png')
     # Chercher les plus grands carrés noirs (FP core)
     labeled, num = label(binary)
     objects = find_objects(labeled)
     h, w = arr.shape
     min_size = min(h, w) * 0.04  # encore plus tolérant (avant: 0.07)
-    max_aspect_ratio = 3.0  # tolère des rectangles jusqu'à 3:1
+    max_aspect_ratio = 2.5  # Plus permissif que 1.5, mais moins que 3.0
     candidates = []
     for _, sl in enumerate(objects):
         if sl is None:
@@ -272,13 +275,41 @@ def detect_finder_patterns(image: Image.Image) -> list[tuple[int, int]]:
             cx = (x0 + x1) // 2
             cy = (y0 + y1) // 2
             candidates.append(((cx, cy), width * height))
-    # Garder les 3 plus grands
+    # Garder les 10 plus grands candidats
     candidates.sort(key=lambda tup: -tup[1])
     num_candidates = len(candidates)
-    centers = [c[0] for c in candidates[:3]]
-    if len(centers) != 3:
+    centers = [c[0] for c in candidates[:10]]
+    if len(centers) < 3:
         raise RuntimeError(f"Finder Patterns non détectés correctement (trouvés: {len(centers)}, candidats: {num_candidates}).")
+    # Sélectionner le meilleur triplet de FP
+    centers = select_best_fp_triplet(centers)
     return centers
+
+def select_best_fp_triplet(centers):
+    """
+    Sélectionne le triplet de centres formant la meilleure géométrie en L (deux alignés, le troisième à angle droit).
+    Retourne la liste des 3 centres (ordre arbitraire).
+    """
+    best_score = float('inf')
+    best_triplet = None
+    for triplet in itertools.combinations(centers, 3):
+        A, B, C = [np.array(pt) for pt in triplet]
+        # Calculer les distances
+        dists = [np.linalg.norm(A-B), np.linalg.norm(A-C), np.linalg.norm(B-C)]
+        dists_sorted = sorted(dists)
+        # On cherche deux distances similaires (côtés du L) et une plus grande (diagonale)
+        side1, side2, diag = dists_sorted
+        # Score = écart relatif entre les deux côtés + écart entre diag et hypoténuse
+        side_ratio = abs(side1 - side2) / max(side1, side2)
+        diag_expected = (side1**2 + side2**2)**0.5
+        diag_ratio = abs(diag - diag_expected) / diag_expected
+        score = side_ratio + diag_ratio
+        if score < best_score:
+            best_score = score
+            best_triplet = triplet
+    if best_triplet is None:
+        raise RuntimeError("Impossible de trouver un triplet de FP formant une géométrie en L plausible.")
+    return list(best_triplet)
 
 def identify_fp_corners_by_color(image, centers, cell_px_size):
     """

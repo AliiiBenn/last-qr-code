@@ -275,5 +275,40 @@ class TestFinderPatternDetection(unittest.TestCase):
         bit_matrix = extract_bit_matrix_with_tp(img, x_positions, y_positions, calibration_map)
         self.assertEqual(bit_matrix, bit_matrix_ref)
 
+    def test_debug_full_grid_fp_centers(self):
+        import src.core.encoder as encoder
+        import src.core.image_utils as image_utils
+        import src.core.protocol_config as pc
+        # Générer une grille complète avec un message bidon
+        message = "DEBUG"
+        bit_matrix = encoder.encode_message_to_matrix(message, pc.DEFAULT_ECC_LEVEL_PERCENT)
+        tmp_path = 'debug_full_grid.png'
+        cell_size = pc.get_protocol_config('V2_S')['DEFAULT_CELL_PIXEL_SIZE']
+        image_utils.create_protocol_image(bit_matrix, cell_size, tmp_path)
+        from PIL import Image
+        img = Image.open(tmp_path)
+        # Détecter les FP
+        centers = decoder.detect_finder_patterns(img)
+        with open('debug_fp_centers_full_grid.txt', 'w') as dbg:
+            dbg.write("--- Detected FP Centers ---\n")
+            for idx, (cx, cy) in enumerate(centers):
+                rgb = img.getpixel((int(round(cx)), int(round(cy))))
+                dbg.write(f"Detected FP {idx} at ({cx},{cy}) : RGB={rgb}\n")
+            dbg.write("\n--- Expected FP Core Centers ---\n")
+            from src.core.matrix_layout import get_zone_coordinates
+            fp_core_zones = {
+                'TL': get_zone_coordinates('FP_TL_CORE'),
+                'TR': get_zone_coordinates('FP_TR_CORE'),
+                'BL': get_zone_coordinates('FP_BL_CORE')
+            }
+            for label, (r_start, r_end, c_start, c_end) in fp_core_zones.items():
+                center_r = (r_start + r_end) // 2
+                center_c = (c_start + c_end) // 2
+                px = center_c*cell_size + cell_size//2
+                py = center_r*cell_size + cell_size//2
+                rgb = img.getpixel((px, py))
+                dbg.write(f"Expected {label} core center at cell({center_r},{center_c}) -> pixel({px},{py}) : RGB={rgb}\n")
+        # Pas d'assert, c'est un test utilitaire pour debug
+
 if __name__ == '__main__':
     unittest.main() 

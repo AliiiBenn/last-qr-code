@@ -5,7 +5,7 @@ from PIL import Image, UnidentifiedImageError
 
 import src.core.protocol_config as pc
 import src.core.image_utils as iu
-from src.core.matrix_layout import get_cell_zone_type, get_fixed_pattern_bits
+from src.core.matrix_layout import get_cell_zone_type, get_fixed_pattern_bits, get_zone_coordinates
 
 class TestImageUtils(unittest.TestCase):
 
@@ -164,28 +164,33 @@ class TestImageUtils(unittest.TestCase):
         matrix_dim = 35
         img_size = matrix_dim * cell_px_size
         img = Image.new('RGB', (img_size, img_size), pc.WHITE)
-        # Remplir uniquement les FP
-        for r in range(matrix_dim):
-            for c in range(matrix_dim):
-                zone = get_cell_zone_type(r, c)
-                if 'FP_' in zone:
-                    bits = get_fixed_pattern_bits(zone.replace('_MARGIN',''), r%7 if 'FP_' in zone else 0, c%7 if 'FP_' in zone else 0)
+        # Remplir uniquement les FP cores
+        fp_core_zones = ['FP_TL_CORE', 'FP_TR_CORE', 'FP_BL_CORE']
+        for zone in fp_core_zones:
+            r_start, r_end, c_start, c_end = get_zone_coordinates(zone)
+            for r in range(r_start, r_end+1):
+                for c in range(c_start, c_end+1):
+                    rel_r = r - r_start
+                    rel_c = c - c_start
+                    bits = get_fixed_pattern_bits(zone, rel_r, rel_c)
                     color = iu.bits_to_rgb(bits)
                     for dr in range(cell_px_size):
                         for dc in range(cell_px_size):
                             img.putpixel((c*cell_px_size+dc, r*cell_px_size+dr), color)
-        # Vérifier la couleur centrale de chaque FP
-        fp_coords = {
-            'TL': (3, 3),
-            'TR': (3, matrix_dim-4),
-            'BL': (matrix_dim-4, 3)
+        # Vérifier la couleur centrale de chaque FP core
+        fp_core_centers = {
+            'TL': get_zone_coordinates('FP_TL_CORE'),
+            'TR': get_zone_coordinates('FP_TR_CORE'),
+            'BL': get_zone_coordinates('FP_BL_CORE')
         }
         expected = pc.FP_CONFIG['center_colors']
-        for label, (r, c) in fp_coords.items():
-            px = c*cell_px_size + cell_px_size//2
-            py = r*cell_px_size + cell_px_size//2
+        for label, (r_start, r_end, c_start, c_end) in fp_core_centers.items():
+            center_r = (r_start + r_end) // 2
+            center_c = (c_start + c_end) // 2
+            px = center_c*cell_px_size + cell_px_size//2
+            py = center_r*cell_px_size + cell_px_size//2
             rgb = img.getpixel((px, py))
-            self.assertEqual(rgb, expected[label], f"FP {label} centre: attendu {expected[label]}, obtenu {rgb}")
+            self.assertEqual(rgb, expected[label], f"FP {label} core centre: attendu {expected[label]}, obtenu {rgb}")
 
 if __name__ == '__main__':
     unittest.main() 
