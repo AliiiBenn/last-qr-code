@@ -238,3 +238,20 @@ last-qr-code/
 *   **Impact sur les Modules :** Principalement documentaire, mais peut entraîner des petites retouches de code.
 
 ---
+
+## [RÉALISÉ] Avancement au 2024-XX-XX
+
+- **Intégration complète de Reed-Solomon (RS) pour l'ECC** :
+    - L'encodeur permet désormais de choisir entre ECC simple (checksum) et Reed-Solomon (RS) pour la correction d'erreurs.
+    - Le nombre de symboles ECC utilisés (RS) est stocké dans les métadonnées.
+    - Le pipeline de décodage détecte automatiquement le mode ECC et applique la correction RS si besoin.
+- **Robustesse accrue sur les métadonnées** :
+    - Correction de la gestion des cas sans protection (protection_bits=0).
+    - Vérification et parsing robustes des métadonnées, padding, etc.
+- **Tests unitaires** :
+    - Tous les tests unitaires passent (hors robustesse Finder Patterns, traitée ailleurs).
+    - Pipeline complet validé (encodage, décodage, ECC, RS, métadonnées).
+- **Synchronisation du code** :
+    - Toutes les modifications ont été commit et push sur le dépôt distant.
+
+---

@@ -1,6 +1,7 @@
 from PIL import Image, ImageDraw
 import src.core.protocol_config as pc
 import numpy as np
+from typing import List, Tuple
 
 def bits_to_rgb(bits_pair: str):
     """Convertit une paire de bits (ex: '01') en une couleur RVB en utilisant BITS_TO_COLOR_MAP."""
@@ -16,6 +17,8 @@ def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str
     Sauvegarde l'image dans output_filename.
     Ajoute une marge blanche de margin_px pixels autour de la grille si margin_px > 0.
     """
+    if margin_px < 0:
+        raise ValueError("margin_px must be >= 0.")
     if not bit_matrix or not bit_matrix[0]:
         raise ValueError("bit_matrix is empty or invalid.")
     
@@ -90,7 +93,12 @@ def rgb_to_bits(rgb_tuple: tuple[int, int, int], calibration_map: dict[str, tupl
         
     return closest_bits 
 
-def sample_line_profile(image: Image.Image, start_px: tuple[float, float], end_px: tuple[float, float], num_samples: int) -> list:
+def sample_line_profile(
+    image: Image.Image,
+    start_px: tuple[float, float],
+    end_px: tuple[float, float],
+    num_samples: int
+) -> List[Tuple[int, int, int]]:
     """
     Échantillonne la couleur (RVB) le long d'un segment entre start_px et end_px (inclus),
     en num_samples points également espacés.
@@ -98,7 +106,9 @@ def sample_line_profile(image: Image.Image, start_px: tuple[float, float], end_p
     """
     x0, y0 = start_px
     x1, y1 = end_px
-    profile = []
+    if num_samples <= 0:
+        raise ValueError("num_samples must be a positive integer.")
+    profile: List[Tuple[int, int, int]] = []
     for i in range(num_samples):
         t = i / (num_samples - 1) if num_samples > 1 else 0
         x = x0 + (x1 - x0) * t

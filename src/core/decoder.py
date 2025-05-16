@@ -556,6 +556,11 @@ def extract_bit_matrix_with_tp(
             bit_matrix[i][j] = bits_pair
     return bit_matrix
 
+def round_angle_to_90(angle):
+    """Arrondit l'angle au multiple de 90° le plus proche (0, 90, 180, 270)."""
+    angle = angle % 360
+    return int(round(angle / 90.0)) * 90 % 360
+
 # --- Main Decoding Orchestration (Phase 6/7) ---
 
 def decode_image_to_message(image_path: str) -> str:
@@ -577,10 +582,11 @@ def decode_image_to_message(image_path: str) -> str:
         # Detect finder patterns
         fp_centers = detect_finder_patterns(image)
         fp_corners = identify_fp_corners(fp_centers)
-        # Calculate rotation and rotate if needed
+        # Calculate rotation and round to nearest 90°
         angle = compute_rotation_angle(fp_corners)
-        if abs(angle) > 1.0:  # Only rotate if angle is significant (>1 degree)
-            image = rotate_image(image, angle)
+        angle_90 = round_angle_to_90(angle)
+        if angle_90 != 0:  # Only rotate if angle is not 0
+            image = rotate_image(image, angle_90)
             # Re-detect finder patterns after rotation
             fp_centers = detect_finder_patterns(image)
             fp_corners = identify_fp_corners(fp_centers)

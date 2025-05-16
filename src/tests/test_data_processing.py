@@ -2,6 +2,7 @@ import unittest
 from unittest import mock
 import src.core.data_processing as dp
 import src.core.protocol_config as pc
+from importlib.util import find_spec
 
 class TestDataProcessing(unittest.TestCase):
 
@@ -364,8 +365,7 @@ class TestReedSolomonECC(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
-            import reedsolo
-            cls.reedsolo_available = True
+            cls.reedsolo_available = find_spec("reedsolo") is not None
         except ImportError:
             cls.reedsolo_available = False
 

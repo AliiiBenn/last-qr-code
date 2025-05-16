@@ -98,8 +98,8 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
         # Nombre de symboles ECC (octets)
         num_ecc_symbols = int((total_bytes * ecc_level_percent) // 100)
         if num_ecc_symbols < 0: num_ecc_symbols = 0
-        if num_ecc_symbols > total_bytes - 1:
-            num_ecc_symbols = max(1, total_bytes - 1)  # Laisser au moins 1 octet de données
+        # Clamp to [1, total_bytes-1] -> must leave at least one data byte
+        num_ecc_symbols = max(1, min(num_ecc_symbols, total_bytes - 1))
         num_data_bytes = total_bytes - num_ecc_symbols
         target_message_bit_length = num_data_bytes * 8
         # Pour la métadonnée, on encode le nombre de symboles ECC sur ecc_level_code (4 bits, max 15)
@@ -108,7 +108,8 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
         # ECC simple: bits, multiple de 8
         raw_num_ecc_bits = available_data_ecc_bits * (ecc_level_percent / 100.0)
         num_ecc_bits = int(raw_num_ecc_bits // 8) * 8
-        if num_ecc_bits < 0: num_ecc_bits = 0
+        if num_ecc_bits < 0:
+            num_ecc_bits = 0
         min_data_bits_needed = 8
         if num_ecc_bits > available_data_ecc_bits - min_data_bits_needed:
             num_ecc_bits = int((available_data_ecc_bits - min_data_bits_needed) // 8) * 8
@@ -169,14 +170,21 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
     for r in range(md_r_start, md_r_end + 1):
         for c in range(md_c_start, md_c_end + 1):
             if ml.get_cell_zone_type(r,c) == 'METADATA_AREA':
-                if current_bit_index_metadata < len(metadata_stream):
-                    bits_to_place = metadata_stream[current_bit_index_metadata : current_bit_index_metadata + pc.BITS_PER_CELL]
-                    if len(bits_to_place) == pc.BITS_PER_CELL:
-                         bit_matrix[r][c] = bits_to_place
-                    else:
-                        if bits_to_place:
-                             raise ValueError(f"Metadata stream length not a multiple of BITS_PER_CELL. Remainder: {bits_to_place}")
-                    current_bit_index_metadata += pc.BITS_PER_CELL
+                if current_bit_index_metadata >= len(metadata_stream):
+                    continue
+
+                bits_to_place = metadata_stream[
+                    current_bit_index_metadata : current_bit_index_metadata + pc.BITS_PER_CELL
+                ]
+
+                if len(bits_to_place) != pc.BITS_PER_CELL:
+                    raise ValueError(
+                        "Metadata stream length not a multiple of BITS_PER_CELL. "
+                        f"Remainder: {bits_to_place}"
+                    )
+
+                bit_matrix[r][c] = bits_to_place
+                current_bit_index_metadata += pc.BITS_PER_CELL
     if current_bit_index_metadata != len(metadata_stream):
         raise ValueError(f"Metadata stream not fully placed. Expected {len(metadata_stream)} bits, placed {current_bit_index_metadata}.")
 

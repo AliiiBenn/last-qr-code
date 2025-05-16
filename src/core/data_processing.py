@@ -188,7 +188,11 @@ def parse_metadata_bits(metadata_stream: str, metadata_cfg: dict = None) -> dict
                 # Correction par majorité bit à bit
                 corrected = ''.join(b1 if b1 == b2 else '0' for b1, b2 in zip(block1, block2))
                 import warnings
-                warnings.warn(f"Metadata protection: blocks differ but {ratio*100:.1f}% bits match. Auto-correction applied.")
+                warnings.warn(
+                    f"Metadata protection: blocks differ but {ratio*100:.1f}% bits match. "
+                    "Auto-correction applied.",
+                    stacklevel=2,
+                )
                 block1 = corrected
             else:
                 raise ValueError("Metadata protection check failed: repeated blocks do not match.")

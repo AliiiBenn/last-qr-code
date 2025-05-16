@@ -173,7 +173,10 @@ class TestFinderPatternDetection(unittest.TestCase):
         is_ecc_valid = decoder.dp.verify_simple_ecc(encrypted_message_bits, received_ecc_bits)
         self.assertTrue(is_ecc_valid)
         padded_message_bits = decoder.dp.apply_xor_cipher(encrypted_message_bits, parsed_metadata['xor_key'])
-        decoded_message = decoder.dp.padded_bits_to_text(padded_message_bits)
+        decoded_message = decoder.dp.padded_bits_to_text(
+            padded_message_bits,
+            original_bit_length=len(encrypted_message_bits),
+        )
         self.assertEqual(decoded_message, message)
         # Nettoyer le fichier temporaire
         if os.path.exists(tmp_path):
