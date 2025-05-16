@@ -115,7 +115,7 @@ class TestDataProcessing(unittest.TestCase):
 
         # Cas où la clé XOR a une mauvaise longueur
         with self.assertRaises(ValueError):
-            dp.format_metadata_bits(version, ecc_level, msg_len, "101") # Clé trop courte
+            dp.format_metadata_bits(version, ecc_level, msg_len, "101", orig_len_bits) # Clé trop courte
 
         # Test avec une configuration où protection_bits = 0 (si on la changeait temporairement)
         original_protection_bits = cfg['protection_bits']
@@ -125,7 +125,7 @@ class TestDataProcessing(unittest.TestCase):
         try:
             expected_no_protection_metadata = info_bits_str
             self.assertEqual(len(expected_no_protection_metadata), cfg['total_bits'])
-            self.assertEqual(dp.format_metadata_bits(version, ecc_level, msg_len, xor_key), expected_no_protection_metadata)
+            self.assertEqual(dp.format_metadata_bits(version, ecc_level, msg_len, xor_key, orig_len_bits), expected_no_protection_metadata)
         finally:
             # Restaurer la config originale pour ne pas affecter d'autres tests
             cfg['protection_bits'] = original_protection_bits
@@ -137,7 +137,7 @@ class TestDataProcessing(unittest.TestCase):
         cfg['total_bits'] = expected_info_len + 10
         try:
             with self.assertRaises(NotImplementedError):
-                dp.format_metadata_bits(version, ecc_level, msg_len, xor_key)
+                dp.format_metadata_bits(version, ecc_level, msg_len, xor_key, orig_len_bits)
         finally:
             cfg['protection_bits'] = original_protection_bits
             cfg['total_bits'] = original_total_bits
@@ -227,16 +227,18 @@ class TestDecoderDataProcessing(unittest.TestCase):
     def test_parse_metadata_bits_no_protection_config(self):
         cfg_no_protection = {
             'version_bits': 6, 'ecc_level_bits': 4, 'msg_len_bits': 10, 'key_bits': 16,
+            'orig_len_bits': 16,
             'protection_bits': 0,
-            'total_bits': 6 + 4 + 10 + 16 # 36
+            'total_bits': 6 + 4 + 10 + 16 + 16 # 52
         }
         
-        v, e, m, k = 1, 2, 50, '01'*8
+        v, e, m, k, orig_len = 1, 2, 50, '01'*8, 1234
         stream_no_protection = (
             format(v, f"0{cfg_no_protection['version_bits']}b") +
             format(e, f"0{cfg_no_protection['ecc_level_bits']}b") +
             format(m, f"0{cfg_no_protection['msg_len_bits']}b") +
-            k
+            k +
+            format(orig_len, '016b')
         )
         self.assertEqual(len(stream_no_protection), cfg_no_protection['total_bits'])
 
@@ -246,6 +248,7 @@ class TestDecoderDataProcessing(unittest.TestCase):
             self.assertEqual(parsed['ecc_level_code'], e)
             self.assertEqual(parsed['message_encrypted_len'], m)
             self.assertEqual(parsed['xor_key'], k)
+            self.assertEqual(parsed['message_original_len_bits'], orig_len)
             
     def test_parse_metadata_bits_info_block_len_zero_or_negative(self):
         bad_cfg = self.cfg.copy()

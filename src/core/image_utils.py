@@ -27,6 +27,11 @@ def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str
     
     image_width = matrix_width * cell_pixel_size + 2 * margin_px
     image_height = matrix_height * cell_pixel_size + 2 * margin_px
+    # Si besoin, arrondir la marge pour que image_width et image_height soient des multiples de cell_pixel_size
+    if image_width % cell_pixel_size != 0:
+        image_width += cell_pixel_size - (image_width % cell_pixel_size)
+    if image_height % cell_pixel_size != 0:
+        image_height += cell_pixel_size - (image_height % cell_pixel_size)
     
     image = Image.new("RGB", (image_width, image_height), pc.WHITE) # Fond blanc par défaut
     draw = ImageDraw.Draw(image)
@@ -119,3 +124,15 @@ def sample_line_profile(
         else:
             profile.append((0, 0, 0))  # Valeur par défaut si hors image
     return profile 
+
+def perform_color_calibration(image: Image.Image, cell_px_size: int) -> dict[str, tuple[int, int, int]]:
+    # ... code existant ...
+    for i in range(len(expected_ccp_colors)):
+        patch_zone_name = f"{ccp_patch_base_name}{i}"
+        # ... code existant ...
+        avg_r = int(round(sum_r / num_pixels_sampled))
+        avg_g = int(round(sum_g / num_pixels_sampled))
+        avg_b = int(round(sum_b / num_pixels_sampled))
+        sampled_rgb = (avg_r, avg_g, avg_b)
+        print(f"[CALIBRATION] CCP patch {i}: sampled_rgb={sampled_rgb}, expected={theoretical_color_of_this_patch}")
+        # ... existing code ... 

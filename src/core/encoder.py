@@ -2,6 +2,8 @@ import numpy as np
 import src.core.protocol_config as pc
 import src.core.matrix_layout as ml
 import src.core.data_processing as dp
+import src.core.image_utils as image_utils
+from PIL import Image
 
 def initialize_bit_matrix():
     """
@@ -108,20 +110,27 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
         ecc_code_for_metadata = min(num_ecc_symbols, (2**pc.METADATA_CONFIG['ecc_level_bits'])-1)
     else:
         # ECC simple: bits, multiple de 8
-        raw_num_ecc_bits = available_data_ecc_bits * (ecc_level_percent / 100.0)
+        # Correction : forcer la zone DATA_ECC à être un multiple de 8 bits
+        max_payload_bits = (available_data_ecc_bits // 8) * 8
+        if max_payload_bits != available_data_ecc_bits:
+            # On ne peut pas utiliser les derniers bits, ils seront ignorés
+            pass
+        # Calcul du nombre de bits ECC (multiple de 8, <= max_payload_bits)
+        raw_num_ecc_bits = max_payload_bits * (ecc_level_percent / 100.0)
         num_ecc_bits = int(raw_num_ecc_bits // 8) * 8
         if num_ecc_bits < 0:
             num_ecc_bits = 0
         min_data_bits_needed = 8
-        if num_ecc_bits > available_data_ecc_bits - min_data_bits_needed:
-            num_ecc_bits = int((available_data_ecc_bits - min_data_bits_needed) // 8) * 8
+        if num_ecc_bits > max_payload_bits - min_data_bits_needed:
+            num_ecc_bits = int((max_payload_bits - min_data_bits_needed) // 8) * 8
             if num_ecc_bits < 0:
                 num_ecc_bits = 0
-        target_message_bit_length = available_data_ecc_bits - num_ecc_bits
+        target_message_bit_length = max_payload_bits - num_ecc_bits
+        # S'assurer que target_message_bit_length est un multiple de 8
+        target_message_bit_length = (target_message_bit_length // 8) * 8
+        if target_message_bit_length < 0:
+            raise ValueError(f"Not enough space for message and ECC. Target message bits: {target_message_bit_length}")
         ecc_code_for_metadata = min(int(ecc_level_percent), (2**pc.METADATA_CONFIG['ecc_level_bits'])-1)
-
-    if target_message_bit_length < 0:
-        raise ValueError(f"Not enough space for message and ECC. Target message bits: {target_message_bit_length}")
 
     # Longueur réelle du message original (en bits)
     message_original_len_bits = len(message_text.encode('utf-8')) * 8
@@ -137,6 +146,11 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
     encrypted_message_bits = dp.apply_xor_cipher(message_bits, xor_key_for_metadata_and_data)
     encrypted_message_len_bits = len(encrypted_message_bits)
 
+    # LOG DEBUG ENCODAGE
+    print("[ENCODE] XOR key:", xor_key_for_metadata_and_data)
+    print(f"[ENCODE] Message bits ({len(message_bits)}):", message_bits)
+    print(f"[ENCODE] Encrypted message bits ({len(encrypted_message_bits)}):", encrypted_message_bits)
+
     # 2. Calcul des bits ECC
     if ecc_mode == 'rs':
         # Reed-Solomon: data + ecc = total_bytes*8 bits
@@ -146,7 +160,6 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
         payload_stream = data_bits_padded + ecc_bits
         if len(payload_stream) != total_bytes*8:
             raise ValueError(f"Payload RS length mismatch: {len(payload_stream)} vs {total_bytes*8}")
-        # Pour la métadonnée, on encode la longueur des données chiffrées (en bits)
         message_encrypted_len_for_metadata = len(data_bits_padded)
     else:
         if num_ecc_bits == 0:
@@ -159,6 +172,15 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
                 f"Payload stream length mismatch. Expected {target_message_bit_length + (num_ecc_bits if ecc_mode=='simple' else 0)}, "
                 f"got {len(payload_stream)} (Encrypted: {len(encrypted_message_bits)}, ECC: {len(ecc_bits)})")
         message_encrypted_len_for_metadata = len(encrypted_message_bits)
+
+    print(f"[ENCODE] ECC bits ({len(ecc_bits)}):", ecc_bits)
+    print(f"[ENCODE] Payload stream ({len(payload_stream)}):", payload_stream)
+
+    # Correction : padder le payload_stream pour remplir exactement la zone DATA_ECC
+    if len(payload_stream) < max_payload_bits:
+        payload_stream = payload_stream.ljust(max_payload_bits, '0')
+    elif len(payload_stream) > max_payload_bits:
+        raise ValueError(f"Payload stream trop long ({len(payload_stream)}) pour la zone DATA_ECC ({max_payload_bits})")
 
     # 3. Préparer les métadonnées
     metadata_stream = dp.format_metadata_bits(
@@ -207,12 +229,28 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
             current_bit_index_payload += pc.BITS_PER_CELL
     if current_bit_index_payload != len(payload_stream):
         raise ValueError(f"Payload stream not fully placed in DATA_ECC area. Expected {len(payload_stream)} bits, placed {current_bit_index_payload}.")
-    if len(payload_stream) != available_data_ecc_bits:
+    if len(payload_stream) != max_payload_bits:
         raise ValueError(
             f"Final payload stream length ({len(payload_stream)}) does not match "
+            f"max_payload_bits ({max_payload_bits}). This indicates an issue "
             f"available_data_ecc_bits ({available_data_ecc_bits}). This indicates an issue "
             f"in calculating message/ECC bit lengths.")
+    # Correction : remplir les cellules DATA_ECC restantes avec '00' si besoin
+    for r, c in data_ecc_fill_order:
+        if bit_matrix[r][c] is None:
+            bit_matrix[r][c] = '00'
     return bit_matrix
 
 # --- Fonctions de la Phase 3 et suivantes seraient ajoutées ici ---
 # def encode_message_to_matrix(...) 
+
+# Patch utilitaire pour forcer la quiet zone lors de la génération d'image
+def create_protocol_image_with_forced_quiet_zone(bit_matrix, cell_pixel_size, output_filename, margin_px=None):
+    if margin_px is None:
+        margin_px = cell_pixel_size * 4
+    else:
+        # Forcer la marge à être un multiple de cell_pixel_size
+        margin_px = ((margin_px + cell_pixel_size - 1) // cell_pixel_size) * cell_pixel_size
+    image_utils.create_protocol_image(bit_matrix, cell_pixel_size, output_filename, margin_px=margin_px)
+    img = Image.open(output_filename)
+    print(f"[DEBUG] Image generated size: {img.size}, margin_px: {margin_px}") 

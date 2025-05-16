@@ -35,9 +35,9 @@ def main():
         print("Message encoded to bit matrix successfully.")
 
         print(f"Generating image with cell size {cell_size}px...")
-        image_utils.create_protocol_image(
-            bit_matrix=bit_matrix, 
-            cell_pixel_size=cell_size, 
+        encoder.create_protocol_image_with_forced_quiet_zone(
+            bit_matrix=bit_matrix,
+            cell_pixel_size=cell_size,
             output_filename=output_image_filename
         )
         print(f"SUCCESS: Image generated and saved to '{os.path.abspath(output_image_filename)}'")

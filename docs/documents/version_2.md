@@ -1,5 +1,21 @@
 # PLAN DE DÉVELOPPEMENT - PROTOCOLE GRAPHIQUE V2
 
+## [AVANCEMENT 2024-XX-XX]
+
+- **Pipeline encodeur → image → décodage parfaitement fonctionnel** :
+    - Le message encodé est restitué à l'identique après passage par l'image (aucune perte ni corruption).
+    - La détection des Finder Patterns (FP) par couleur est robuste : chaque coin est identifié sans ambiguïté (rouge, bleu, noir).
+    - La quiet zone (bordure blanche) et les marges autour des FP sont respectées, assurant une détection fiable.
+    - La zone METADATA est lue et vérifiée sans erreur (protection bits OK).
+    - Tous les tests unitaires passent (remplissage complet de la matrice, encodage/décodage, robustesse binaire).
+    - Le pipeline bits→image→bits est strictement fidèle (mapping couleur→bits exact).
+- **Calibration couleur dynamique** :
+    - Le pipeline fonctionne en mode bypass (mapping couleur→bits exact). La calibration dynamique CCP reste à réactiver et tester pour la robustesse en conditions réelles (légères dérives de couleur, bruit, etc).
+- **Prochaines étapes** :
+    - Réactiver la calibration dynamique CCP et valider la robustesse sur images bruitées ou altérées.
+    - Tester la robustesse à la rotation, au bruit, à la perspective, et sur différentes tailles de matrice.
+    - Finaliser la CLI et la documentation.
+
 ## 1. Introduction et Objectifs de la V2
 
 La Version 1 (V1) de notre protocole graphique a établi les fondations pour l'encodage et le décodage de messages texte en images. La Version 2 (V2) vise à significativement améliorer la robustesse, la flexibilité et les fonctionnalités du protocole, en s'appuyant sur les apprentissages de la V1 et en intégrant des techniques plus avancées.

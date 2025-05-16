@@ -27,7 +27,7 @@ BITS_TO_COLOR_MAP = {v: k for k, v in COLOR_TO_BITS_MAP.items()}
 FP_CONFIG = {
     'size': 7,          # Taille du motif de détection (ex: 7x7 cellules)
     'margin': 2,        # Marge autour du motif de détection central (augmentée pour robustesse visuelle)
-    'pattern_colors': [RED, BLUE, BLACK, WHITE], # Couleurs pour les anneaux (hors centre)
+    'pattern_colors': [RED, BLUE, BLACK, WHITE], # Anneaux : rouge, bleu, noir, blanc
     'center_colors': {
         'TL': RED,
         'TR': BLUE,
