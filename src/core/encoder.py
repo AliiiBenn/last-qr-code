@@ -123,6 +123,8 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
     if target_message_bit_length < 0:
         raise ValueError(f"Not enough space for message and ECC. Target message bits: {target_message_bit_length}")
 
+    # Longueur réelle du message original (en bits)
+    message_original_len_bits = len(message_text.encode('utf-8')) * 8
     message_bits = dp.text_to_padded_bits(message_text, target_message_bit_length)
 
     if custom_xor_key_str:
@@ -163,7 +165,8 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
         protocol_version=1,
         ecc_level_code=ecc_code_for_metadata,
         message_encrypted_len=message_encrypted_len_for_metadata,
-        xor_key_actual_bits=xor_key_for_metadata_and_data
+        xor_key_actual_bits=xor_key_for_metadata_and_data,
+        message_original_len_bits=message_original_len_bits
     )
 
     # 4. Placer les métadonnées dans la matrice

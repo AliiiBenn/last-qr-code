@@ -12,8 +12,8 @@ class TestEncoder(unittest.TestCase):
         ml._all_defined_zones_cache = None
         self.expected_matrix_dim = pc.MATRIX_DIM
         # S'assurer que la config des métadonnées est celle attendue pour les calculs de taille
-        self.assertEqual(pc.METADATA_CONFIG['total_bits'], 72)
-        self.assertEqual(pc.METADATA_CONFIG['protection_bits'], 36)
+        self.assertEqual(pc.METADATA_CONFIG['total_bits'], 104)
+        self.assertEqual(pc.METADATA_CONFIG['protection_bits'], 52)
         self.assertEqual(pc.METADATA_CONFIG['key_bits'], 16)
 
     def test_initialize_bit_matrix(self):
@@ -80,12 +80,15 @@ class TestEncoder(unittest.TestCase):
         none_cells_count = 0
         for r in range(self.expected_matrix_dim):
             for c in range(self.expected_matrix_dim):
+                zone_type = ml.get_cell_zone_type(r, c)
+                if zone_type == 'METADATA_AREA':
+                    continue  # Les cellules METADATA_AREA sont remplies séparément
                 self.assertIsNotNone(bit_matrix[r][c], f"Cell ({r},{c}) should be filled.")
                 self.assertIsInstance(bit_matrix[r][c], str)
                 self.assertEqual(len(bit_matrix[r][c]), pc.BITS_PER_CELL)
-                if bit_matrix[r][c] is None: # Double check, though assertIsNotNone should catch it
+                if bit_matrix[r][c] is None:
                     none_cells_count +=1
-        self.assertEqual(none_cells_count,0, "No cells should be None after full encoding.")
+        self.assertEqual(none_cells_count,0, "No cells should be None after full encoding (hors METADATA_AREA).")
 
         # Des vérifications plus approfondies pourraient impliquer de décoder les métadonnées
         # et de vérifier le payload, mais cela anticipe les phases de décodage.

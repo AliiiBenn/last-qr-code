@@ -91,30 +91,27 @@ class TestDataProcessing(unittest.TestCase):
     def test_format_metadata_bits(self):
         # Utiliser les valeurs de pc.METADATA_CONFIG pour la cohérence
         cfg = pc.METADATA_CONFIG
-        self.assertEqual(cfg['total_bits'], 72) # Assurer que la config est comme attendu par le test
-        self.assertEqual(cfg['protection_bits'], 36)
-        expected_info_len = cfg['total_bits'] - cfg['protection_bits'] # Devrait être 36
-        self.assertEqual(cfg['version_bits'] + cfg['ecc_level_bits'] + cfg['msg_len_bits'] + cfg['key_bits'], expected_info_len)
+        self.assertEqual(cfg['total_bits'], 104) # Nouvelle config : 52+52
+        self.assertEqual(cfg['protection_bits'], 52)
+        expected_info_len = cfg['total_bits'] - cfg['protection_bits'] # Devrait être 52
+        self.assertEqual(cfg['version_bits'] + cfg['ecc_level_bits'] + cfg['msg_len_bits'] + cfg['key_bits'] + cfg['orig_len_bits'], expected_info_len)
 
         # Cas de test 1: valeurs simples
         version = 1     # 0001 (4b)
         ecc_level = 2   # 0010 (4b)
         msg_len = 1024  # 010000000000 (12b)
         xor_key = "1010101010101010" # (16b)
-        # Total info bits: 4+4+12+16 = 36 bits
-        
+        orig_len_bits = 2048 # 0000100000000000 (16b)
         version_b = format(version, f'0{cfg["version_bits"]}b')
         ecc_level_b = format(ecc_level, f'0{cfg["ecc_level_bits"]}b')
         msg_len_b = format(msg_len, f'0{cfg["msg_len_bits"]}b')
-        
-        info_bits_str = version_b + ecc_level_b + msg_len_b + xor_key
+        orig_len_b = format(orig_len_bits, '016b')
+        info_bits_str = version_b + ecc_level_b + msg_len_b + xor_key + orig_len_b
         self.assertEqual(len(info_bits_str), expected_info_len)
-        
         # Protection par répétition
         expected_metadata = info_bits_str + info_bits_str 
         self.assertEqual(len(expected_metadata), cfg['total_bits'])
-        
-        self.assertEqual(dp.format_metadata_bits(version, ecc_level, msg_len, xor_key), expected_metadata)
+        self.assertEqual(dp.format_metadata_bits(version, ecc_level, msg_len, xor_key, orig_len_bits), expected_metadata)
 
         # Cas où la clé XOR a une mauvaise longueur
         with self.assertRaises(ValueError):
@@ -150,18 +147,20 @@ class TestDecoderDataProcessing(unittest.TestCase):
     def setUp(self):
         self.cfg = pc.METADATA_CONFIG
         self.version = 1
-        self.ecc_level_code = 3
-        self.msg_len = 128
-        self.xor_key = '1100110011001100' # 16 bits as per default config
+        self.ecc_level_code = 2
+        self.msg_len = 1024
+        self.xor_key = '1010101010101010' # 16 bits as per default config
+        self.orig_len_bits = 2048
 
         self.info_block = (
             format(self.version, f"0{self.cfg['version_bits']}b") +
             format(self.ecc_level_code, f"0{self.cfg['ecc_level_bits']}b") +
             format(self.msg_len, f"0{self.cfg['msg_len_bits']}b") +
-            self.xor_key
+            self.xor_key +
+            format(self.orig_len_bits, '016b')
         )
         # Assuming simple repetition protection as per default METADATA_CONFIG
-        self.valid_metadata_stream = self.info_block + self.info_block
+        self.valid_metadata_stream = self.info_block * 2  # 52*2=104 bits
         self.assertEqual(len(self.info_block), self.cfg['total_bits'] - self.cfg['protection_bits'])
         self.assertEqual(len(self.valid_metadata_stream), self.cfg['total_bits'])
 
@@ -171,6 +170,7 @@ class TestDecoderDataProcessing(unittest.TestCase):
         self.assertEqual(parsed['ecc_level_code'], self.ecc_level_code)
         self.assertEqual(parsed['message_encrypted_len'], self.msg_len)
         self.assertEqual(parsed['xor_key'], self.xor_key)
+        self.assertEqual(parsed['message_original_len_bits'], self.orig_len_bits)
 
     def test_parse_metadata_bits_invalid_length(self):
         with self.assertRaisesRegex(ValueError, "Metadata stream length is incorrect"):

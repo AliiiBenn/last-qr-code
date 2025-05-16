@@ -11,9 +11,9 @@ class TestMatrixLayout(unittest.TestCase):
         # S'assurer que MATRIX_DIM est bien 35 comme attendu par les coordonnées codées en dur dans les tests
         self.assertEqual(pc.MATRIX_DIM, 35)
         self.assertEqual(pc.FP_CONFIG['size'], 7)
-        self.assertEqual(pc.FP_CONFIG['margin'], 1)
+        self.assertEqual(pc.FP_CONFIG['margin'], 2)
         self.assertEqual(pc.METADATA_CONFIG['rows'], 6)
-        self.assertEqual(pc.METADATA_CONFIG['cols'], 6)
+        self.assertEqual(pc.METADATA_CONFIG['cols'], 9)
         self.assertEqual(pc.CCP_CONFIG['patch_size'], 2)
 
 
@@ -24,9 +24,9 @@ class TestMatrixLayout(unittest.TestCase):
         self.assertEqual(ml.get_zone_coordinates('FP_BL'), (28, 34, 0, 6))
 
         # FP Cores
-        self.assertEqual(ml.get_zone_coordinates('FP_TL_CORE'), (1, 5, 1, 5)) # 7-1-1 = 5, so 1 to 5
-        self.assertEqual(ml.get_zone_coordinates('FP_TR_CORE'), (1, 5, 29, 33))
-        self.assertEqual(ml.get_zone_coordinates('FP_BL_CORE'), (29, 33, 1, 5))
+        self.assertEqual(ml.get_zone_coordinates('FP_TL_CORE'), (2, 4, 2, 4)) # 7-2-2 = 3, so 2 to 4
+        self.assertEqual(ml.get_zone_coordinates('FP_TR_CORE'), (2, 4, 30, 32))
+        self.assertEqual(ml.get_zone_coordinates('FP_BL_CORE'), (30, 32, 2, 4))
 
         # Timing Patterns (TP)
         # TP_H: row = 6, col = 7 to 34-1-7 = 27 (35 - 1 - 7 = 27)
@@ -36,8 +36,8 @@ class TestMatrixLayout(unittest.TestCase):
 
         # Metadata Area
         # rows=6, cols=6. c_start = 35 - 7 - 6 = 22.
-        # (r_start, r_end, c_start, c_end) -> (0, 5, 22, 27)
-        self.assertEqual(ml.get_zone_coordinates('METADATA_AREA'), (0, 5, 22, 27))
+        # (r_start, r_end, c_start, c_end) -> (0, 5, 7, 15)
+        self.assertEqual(ml.get_zone_coordinates('METADATA_AREA'), (0, 5, 7, 15))
 
         # Calibration Color Patches (CCP)
         # patch_size = 2. r_start = 35-7 = 28.
@@ -60,10 +60,10 @@ class TestMatrixLayout(unittest.TestCase):
 
     def test_get_cell_zone_type(self):
         # FP Cores
-        self.assertEqual(ml.get_cell_zone_type(1, 1), 'FP_TL_CORE')      # TL Core
+        self.assertEqual(ml.get_cell_zone_type(2, 2), 'FP_TL_CORE')      # TL Core
         self.assertEqual(ml.get_cell_zone_type(3, 3), 'FP_TL_CORE')      # Center of TL Core
-        self.assertEqual(ml.get_cell_zone_type(1, 29), 'FP_TR_CORE')     # TR Core
-        self.assertEqual(ml.get_cell_zone_type(29, 1), 'FP_BL_CORE')     # BL Core
+        self.assertEqual(ml.get_cell_zone_type(2, 30), 'FP_TR_CORE')     # TR Core
+        self.assertEqual(ml.get_cell_zone_type(30, 2), 'FP_BL_CORE')     # BL Core
 
         # FP Margins
         self.assertEqual(ml.get_cell_zone_type(0, 0), 'FP_TL_MARGIN')      # TL Margin
@@ -77,10 +77,10 @@ class TestMatrixLayout(unittest.TestCase):
         self.assertEqual(ml.get_cell_zone_type(7, 6), 'TP_V')          # Start of TP_V
         self.assertEqual(ml.get_cell_zone_type(27, 6), 'TP_V')         # End of TP_V
 
-        # Metadata Area
-        self.assertEqual(ml.get_cell_zone_type(0, 22), 'METADATA_AREA') # Start of Metadata
-        self.assertEqual(ml.get_cell_zone_type(5, 27), 'METADATA_AREA') # End of Metadata
-        self.assertEqual(ml.get_cell_zone_type(2, 25), 'METADATA_AREA') # Middle of Metadata
+        # Metadata Area (nouvelle zone : (0,5,7,15))
+        self.assertEqual(ml.get_cell_zone_type(0, 7), 'METADATA_AREA') # Début de la zone METADATA_AREA
+        self.assertEqual(ml.get_cell_zone_type(5, 15), 'METADATA_AREA') # End of Metadata
+        self.assertEqual(ml.get_cell_zone_type(2, 10), 'METADATA_AREA') # Middle of Metadata
 
         # CCP Patches
         self.assertEqual(ml.get_cell_zone_type(28, 7), 'CCP_PATCH_0')
@@ -90,20 +90,21 @@ class TestMatrixLayout(unittest.TestCase):
 
         # Data/ECC Area (example points)
         self.assertEqual(ml.get_cell_zone_type(10, 10), 'DATA_ECC')
-        self.assertEqual(ml.get_cell_zone_type(0, 7), 'DATA_ECC') # Between FP_TL and TP_H start, but not metadata
+        self.assertEqual(ml.get_cell_zone_type(0, 7), 'METADATA_AREA') # Between FP_TL and TP_H start, but not metadata
         self.assertEqual(ml.get_cell_zone_type(7,0), 'DATA_ECC') # Between FP_TL and TP_V start
         self.assertEqual(ml.get_cell_zone_type(7,7), 'DATA_ECC') # Center-ish area
 
     def test_get_fixed_pattern_bits(self):
         # FP_TL_CORE (centre doit être ROUGE)
-        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 2, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['TL']])
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 1, 1), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['TL']])
         # FP_TR_CORE (centre doit être BLEU)
-        self.assertEqual(ml.get_fixed_pattern_bits('FP_TR_CORE', 2, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['TR']])
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_TR_CORE', 1, 1), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['TR']])
         # FP_BL_CORE (centre doit être NOIR)
-        self.assertEqual(ml.get_fixed_pattern_bits('FP_BL_CORE', 2, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['BL']])
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_BL_CORE', 1, 1), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['center_colors']['BL']])
         # Anneaux restent inchangés (exemple pour TL)
         self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 1, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['pattern_colors'][1]])
-        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 0, 2), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['pattern_colors'][2]])
+        # (0,1) est sur l'anneau externe du core 3x3, pattern_colors[2] (BLEU dans la logique actuelle)
+        self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_CORE', 0, 1), pc.COLOR_TO_BITS_MAP[pc.FP_CONFIG['pattern_colors'][1]])
 
         # FP_TL_MARGIN -> WHITE ('00')
         self.assertEqual(ml.get_fixed_pattern_bits('FP_TL_MARGIN', 0, 0), pc.COLOR_TO_BITS_MAP[pc.WHITE])

@@ -80,11 +80,13 @@ def format_metadata_bits(
     ecc_level_code: int, # Par exemple, un code simple pour le % d'ECC (0-15 si 4 bits)
     message_encrypted_len: int, # Longueur en bits du message après cryptage
     xor_key_actual_bits: str,     # La chaîne de bits de la clé XOR réellement utilisée
+    message_original_len_bits: int, # Longueur réelle du message original (en bits)
     metadata_cfg: dict = None
 ) -> str:
     """
     Assemble les bits de métadonnées selon METADATA_CONFIG (or provided config).
     Gère la protection des métadonnées (répétition des bits d'info pour atteindre total_bits).
+    Ajoute la longueur réelle du message original (en bits) pour permettre un décodage sans ambiguïté du padding.
     """
     cfg = metadata_cfg or pc.METADATA_CONFIG
     
@@ -92,6 +94,8 @@ def format_metadata_bits(
     version_b = format(protocol_version, f'0{cfg["version_bits"]}b')
     ecc_level_b = format(ecc_level_code, f'0{cfg["ecc_level_bits"]}b')
     msg_len_b = format(message_encrypted_len, f'0{cfg["msg_len_bits"]}b')
+    # On réserve 16 bits pour la longueur réelle du message original (max 65535 bits = 8191 octets)
+    orig_len_bits = format(message_original_len_bits, '016b')
     
     # S'assurer que xor_key_actual_bits a la bonne longueur
     if len(xor_key_actual_bits) != cfg['key_bits']:
@@ -101,7 +105,8 @@ def format_metadata_bits(
         version_b,
         ecc_level_b,
         msg_len_b,
-        xor_key_actual_bits # Déjà une chaîne de bits
+        xor_key_actual_bits, # Déjà une chaîne de bits
+        orig_len_bits
     ]
     info_bits_str = "".join(info_bits_list)
     
@@ -113,7 +118,7 @@ def format_metadata_bits(
     if current_info_bits_len != expected_pure_info_len:
         raise ValueError(f"Constructed pure info bits length ({current_info_bits_len}) does not match "
                          f"expected based on config (total_bits - protection_bits = {expected_pure_info_len}). "
-                         f"Check METADATA_CONFIG bit allocations: version_bits + ecc_level_bits + msg_len_bits + key_bits.")
+                         f"Check METADATA_CONFIG bit allocations: version_bits + ecc_level_bits + msg_len_bits + key_bits + message_original_len_bits (16 bits ajoutés).")
 
     # Protection: Répéter les info_bits_str si protection_bits est égal à la longueur des info_bits_str
     # et que total_bits est le double, comme spécifié dans METADATA_CONFIG (36+36=72)
@@ -143,7 +148,7 @@ def format_metadata_bits(
 def parse_metadata_bits(metadata_stream: str, metadata_cfg: dict = None) -> dict:
     """
     Parses the metadata stream to extract protocol version, ECC level, 
-    message length, and XOR key.
+    message length, XOR key, and original message length (in bits).
     Verifies metadata protection (simple repetition).
     """
     cfg = metadata_cfg or pc.METADATA_CONFIG
@@ -223,6 +228,11 @@ def parse_metadata_bits(metadata_stream: str, metadata_cfg: dict = None) -> dict
     xor_key = block1[current_pos : current_pos + cfg['key_bits']]
     current_pos += cfg['key_bits']
 
+    # Longueur réelle du message original (en bits)
+    orig_len_bits_str = block1[current_pos : current_pos + 16]
+    message_original_len_bits = int(orig_len_bits_str, 2)
+    current_pos += 16
+
     if current_pos != info_block_len:
         raise ValueError(
             f"Error parsing metadata info block: consumed {current_pos} bits, expected {info_block_len}."
@@ -232,7 +242,8 @@ def parse_metadata_bits(metadata_stream: str, metadata_cfg: dict = None) -> dict
         'protocol_version': protocol_version,
         'ecc_level_code': ecc_level_code,
         'message_encrypted_len': message_encrypted_len,
-        'xor_key': xor_key
+        'xor_key': xor_key,
+        'message_original_len_bits': message_original_len_bits
     }
 
 def verify_simple_ecc(encrypted_data_bits: str, received_ecc_bits: str) -> bool:

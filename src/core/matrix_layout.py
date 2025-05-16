@@ -49,10 +49,8 @@ def get_zone_coordinates(zone_name):
     md_rows = pc.METADATA_CONFIG['rows']
     md_cols = pc.METADATA_CONFIG['cols']
     if zone_name == 'METADATA_AREA':
-        # Placée à gauche du FP_TR
-        r_start = 0
-        c_start = md_dim - fp_s - md_cols # 35 - 7 - 6 = 22
-        coords = (r_start, r_start + md_rows - 1, c_start, c_start + md_cols - 1)
+        # Juste à droite du FP_TL (qui occupe colonnes 0-6), donc commence à 7
+        coords = (0, md_rows - 1, 7, 7 + md_cols - 1)
 
     # Calibration Color Patches (CCP)
     ccp_ps = pc.CCP_CONFIG['patch_size']
@@ -60,7 +58,7 @@ def get_zone_coordinates(zone_name):
         patch_index = int(zone_name.split('_')[-1])
         # Placés à droite du FP_BL, en ligne
         r_start = md_dim - fp_s # row 28
-        c_start = fp_s + (patch_index * ccp_ps) # col 7, 9, 11, 13 for patches 0,1,2,3
+        c_start = fp_s + (patch_index * ccp_ps)
         coords = (r_start, r_start + ccp_ps - 1, c_start, c_start + ccp_ps - 1)
     elif zone_name == 'CCP_AREA': # Fournit les coordonnées de tous les patches
         coords_list = []
@@ -94,10 +92,13 @@ def _get_all_defined_zone_names():
 
 def get_cell_zone_type(row, col):
     """Détermine le type de zone pour une cellule (row, col)."""
-    
+    # Vérifier d'abord la zone METADATA_AREA (prioritaire)
+    md_r_start, md_r_end, md_c_start, md_c_end = get_zone_coordinates('METADATA_AREA')
+    if md_r_start <= row <= md_r_end and md_c_start <= col <= md_c_end:
+        return 'METADATA_AREA'
+
     # Vérifier les zones les plus spécifiques/petites en premier (cores, patches)
-    # Puis les zones plus larges (FP global pour les marges, TP, Metadata)
-    
+    # Puis les zones plus larges (FP global pour les marges, TP, CCP)
     # Check Cores first
     for fp_core_name in ['FP_TL_CORE', 'FP_TR_CORE', 'FP_BL_CORE']:
         r_start, r_end, c_start, c_end = get_zone_coordinates(fp_core_name)
@@ -124,11 +125,6 @@ def get_cell_zone_type(row, col):
         r_start, r_end, c_start, c_end = get_zone_coordinates(tp_name)
         if r_start <= row <= r_end and c_start <= col <= c_end:
             return tp_name # ex: 'TP_H'
-
-    # Check Metadata Area
-    md_r_start, md_r_end, md_c_start, md_c_end = get_zone_coordinates('METADATA_AREA')
-    if md_r_start <= row <= md_r_end and md_c_start <= col <= md_c_end:
-        return 'METADATA_AREA'
 
     return 'DATA_ECC' # Par défaut, c'est une cellule de données/ECC
 

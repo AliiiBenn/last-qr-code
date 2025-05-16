@@ -324,12 +324,18 @@ def identify_fp_corners_by_color(image, centers, cell_px_size):
         'BL': FP_CONFIG['center_colors']['BL']
     }
     found = {}
+    fp_size = FP_CONFIG['size']
+    margin = FP_CONFIG['margin']
+    core_dim = fp_size - 2 * margin
+    # Offset du centre du core par rapport au coin du FP (en cellules)
+    center_offset_cell = margin + core_dim // 2
     for cx, cy in centers:
-        # Prendre le pixel central du core (core = 5x5, donc offset de 3 cellules depuis le bord du FP)
-        # FP = 7x7, core = 5x5, donc offset = 1 cellule
-        offset = int(cell_px_size * (FP_CONFIG['margin'] + FP_CONFIG['size']//2) / FP_CONFIG['size'])
-        px = int(round(cx))
-        py = int(round(cy))
+        # Calculer la position du centre du core en pixels
+        # On suppose que (cx, cy) est le centre du FP (en pixels)
+        # On veut échantillonner le centre du core, donc on décale de (center_offset_cell - fp_size//2) * cell_px_size
+        fp_center_offset = (center_offset_cell - fp_size // 2) * cell_px_size
+        px = int(round(cx + fp_center_offset))
+        py = int(round(cy + fp_center_offset))
         rgb = image.getpixel((px, py))
         # Trouver la couleur la plus proche parmi les 3 attendues
         min_dist = float('inf')
@@ -651,6 +657,7 @@ def decode_image_to_message(image_path: str) -> str:
 
     xor_key = parsed_metadata['xor_key']
     message_encrypted_len = parsed_metadata['message_encrypted_len']
+    message_original_len_bits = parsed_metadata['message_original_len_bits']
     # ecc_level_code = parsed_metadata['ecc_level_code'] # This is the ecc_level_percent, currently not directly used for ECC bit count here
 
     # Separate encrypted message and ECC bits from payload_stream
@@ -681,7 +688,8 @@ def decode_image_to_message(image_path: str) -> str:
     
     # Convert to text
     try:
-        final_message = dp.padded_bits_to_text(padded_message_bits, original_bit_length=len(encrypted_message_bits))
+        # On tronque à la longueur réelle du message original (en bits) stockée dans les métadonnées
+        final_message = dp.padded_bits_to_text(padded_message_bits[:message_original_len_bits], original_bit_length=message_original_len_bits)
     except ValueError as e: # e.g. UTF-8 decoding error
         raise ValueError(f"Decoder: Error converting bits to text. Data may be corrupted or not valid text. Details: {e}")
         
