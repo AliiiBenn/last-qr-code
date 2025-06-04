@@ -49,10 +49,8 @@ def get_zone_coordinates(zone_name):
     md_rows = pc.METADATA_CONFIG['rows']
     md_cols = pc.METADATA_CONFIG['cols']
     if zone_name == 'METADATA_AREA':
-        # Placée à gauche du FP_TR
-        r_start = 0
-        c_start = md_dim - fp_s - md_cols # 35 - 7 - 6 = 22
-        coords = (r_start, r_start + md_rows - 1, c_start, c_start + md_cols - 1)
+        # Juste à droite du FP_TL (qui occupe colonnes 0-6), donc commence à 7
+        coords = (0, md_rows - 1, 7, 7 + md_cols - 1)
 
     # Calibration Color Patches (CCP)
     ccp_ps = pc.CCP_CONFIG['patch_size']
@@ -60,7 +58,7 @@ def get_zone_coordinates(zone_name):
         patch_index = int(zone_name.split('_')[-1])
         # Placés à droite du FP_BL, en ligne
         r_start = md_dim - fp_s # row 28
-        c_start = fp_s + (patch_index * ccp_ps) # col 7, 9, 11, 13 for patches 0,1,2,3
+        c_start = fp_s + (patch_index * ccp_ps)
         coords = (r_start, r_start + ccp_ps - 1, c_start, c_start + ccp_ps - 1)
     elif zone_name == 'CCP_AREA': # Fournit les coordonnées de tous les patches
         coords_list = []
@@ -94,10 +92,13 @@ def _get_all_defined_zone_names():
 
 def get_cell_zone_type(row, col):
     """Détermine le type de zone pour une cellule (row, col)."""
-    
+    # Vérifier d'abord la zone METADATA_AREA (prioritaire)
+    md_r_start, md_r_end, md_c_start, md_c_end = get_zone_coordinates('METADATA_AREA')
+    if md_r_start <= row <= md_r_end and md_c_start <= col <= md_c_end:
+        return 'METADATA_AREA'
+
     # Vérifier les zones les plus spécifiques/petites en premier (cores, patches)
-    # Puis les zones plus larges (FP global pour les marges, TP, Metadata)
-    
+    # Puis les zones plus larges (FP global pour les marges, TP, CCP)
     # Check Cores first
     for fp_core_name in ['FP_TL_CORE', 'FP_TR_CORE', 'FP_BL_CORE']:
         r_start, r_end, c_start, c_end = get_zone_coordinates(fp_core_name)
@@ -125,11 +126,6 @@ def get_cell_zone_type(row, col):
         if r_start <= row <= r_end and c_start <= col <= c_end:
             return tp_name # ex: 'TP_H'
 
-    # Check Metadata Area
-    md_r_start, md_r_end, md_c_start, md_c_end = get_zone_coordinates('METADATA_AREA')
-    if md_r_start <= row <= md_r_end and md_c_start <= col <= md_c_end:
-        return 'METADATA_AREA'
-
     return 'DATA_ECC' # Par défaut, c'est une cellule de données/ECC
 
 def _color_to_bits(color_tuple):
@@ -149,18 +145,26 @@ def get_fixed_pattern_bits(zone_type, relative_row, relative_col):
     if 'CORE' in zone_type: # FP_TL_CORE, FP_TR_CORE, FP_BL_CORE
         # Core size is (FP_CONFIG['size'] - 2 * margin)
         core_dim = pc.FP_CONFIG['size'] - 2 * fp_m # e.g., 7 - 2*1 = 5
-        
         # Pattern concentrique pour le core 5x5 (si size=7, margin=1)
         # pattern_colors = [RED, BLUE, BLACK, WHITE] (du centre vers l'extérieur pour le FP)
-        # C0 (RED) for center, C1 (BLUE) for next ring, C2 (BLACK) for outer ring of core
-        # C3 (WHITE) is for margin
+        # C0 (center) est maintenant spécifique à chaque coin
         center_coord = core_dim // 2 # e.g. 5//2 = 2
         dist_r = abs(relative_row - center_coord)
         dist_c = abs(relative_col - center_coord)
         max_dist = max(dist_r, dist_c)
 
+        # Déterminer le coin (TL, TR, BL) à partir du zone_type
+        if zone_type.startswith('FP_TL'):
+            center_color = pc.FP_CONFIG['center_colors']['TL']
+        elif zone_type.startswith('FP_TR'):
+            center_color = pc.FP_CONFIG['center_colors']['TR']
+        elif zone_type.startswith('FP_BL'):
+            center_color = pc.FP_CONFIG['center_colors']['BL']
+        else:
+            center_color = pc.FP_CONFIG['pattern_colors'][0] # fallback
+
         if max_dist == 0: # Centre
-            color = pc.FP_CONFIG['pattern_colors'][0]
+            color = center_color
         elif max_dist == 1: # Premier anneau
             color = pc.FP_CONFIG['pattern_colors'][1]
         elif max_dist == 2: # Deuxième anneau (bord du core 5x5)

@@ -1,5 +1,7 @@
 from PIL import Image, ImageDraw
 import src.core.protocol_config as pc
+import numpy as np
+from typing import List, Tuple
 
 def bits_to_rgb(bits_pair: str):
     """Convertit une paire de bits (ex: '01') en une couleur RVB en utilisant BITS_TO_COLOR_MAP."""
@@ -9,19 +11,27 @@ def bits_to_rgb(bits_pair: str):
         return pc.BLACK # Retourner une couleur par défaut ou lever une erreur
     return pc.BITS_TO_COLOR_MAP[bits_pair]
 
-def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str):
+def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str, margin_px: int = 0):
     """
     Crée une image graphique du protocole à partir de la bit_matrix.
     Sauvegarde l'image dans output_filename.
+    Ajoute une marge blanche de margin_px pixels autour de la grille si margin_px > 0.
     """
+    if margin_px < 0:
+        raise ValueError("margin_px must be >= 0.")
     if not bit_matrix or not bit_matrix[0]:
         raise ValueError("bit_matrix is empty or invalid.")
     
     matrix_height = len(bit_matrix)
     matrix_width = len(bit_matrix[0])
     
-    image_width = matrix_width * cell_pixel_size
-    image_height = matrix_height * cell_pixel_size
+    image_width = matrix_width * cell_pixel_size + 2 * margin_px
+    image_height = matrix_height * cell_pixel_size + 2 * margin_px
+    # Si besoin, arrondir la marge pour que image_width et image_height soient des multiples de cell_pixel_size
+    if image_width % cell_pixel_size != 0:
+        image_width += cell_pixel_size - (image_width % cell_pixel_size)
+    if image_height % cell_pixel_size != 0:
+        image_height += cell_pixel_size - (image_height % cell_pixel_size)
     
     image = Image.new("RGB", (image_width, image_height), pc.WHITE) # Fond blanc par défaut
     draw = ImageDraw.Draw(image)
@@ -38,9 +48,9 @@ def create_protocol_image(bit_matrix, cell_pixel_size: int, output_filename: str
             else:
                 color_rgb = bits_to_rgb(bits_pair)
             
-            # Coordonnées du rectangle pour la cellule
-            x0 = c * cell_pixel_size
-            y0 = r * cell_pixel_size
+            # Coordonnées du rectangle pour la cellule (avec marge)
+            x0 = c * cell_pixel_size + margin_px
+            y0 = r * cell_pixel_size + margin_px
             x1 = x0 + cell_pixel_size
             y1 = y0 + cell_pixel_size
             
@@ -87,3 +97,42 @@ def rgb_to_bits(rgb_tuple: tuple[int, int, int], calibration_map: dict[str, tupl
         raise RuntimeError("Impossible de déterminer les bits les plus proches à partir de la calibration_map.")
         
     return closest_bits 
+
+def sample_line_profile(
+    image: Image.Image,
+    start_px: tuple[float, float],
+    end_px: tuple[float, float],
+    num_samples: int
+) -> List[Tuple[int, int, int]]:
+    """
+    Échantillonne la couleur (RVB) le long d'un segment entre start_px et end_px (inclus),
+    en num_samples points également espacés.
+    Retourne une liste de tuples RVB (ou valeurs de gris si image convertie).
+    """
+    x0, y0 = start_px
+    x1, y1 = end_px
+    if num_samples <= 0:
+        raise ValueError("num_samples must be a positive integer.")
+    profile: List[Tuple[int, int, int]] = []
+    for i in range(num_samples):
+        t = i / (num_samples - 1) if num_samples > 1 else 0
+        x = x0 + (x1 - x0) * t
+        y = y0 + (y1 - y0) * t
+        xi, yi = int(round(x)), int(round(y))
+        if 0 <= xi < image.width and 0 <= yi < image.height:
+            profile.append(image.getpixel((xi, yi)))
+        else:
+            profile.append((0, 0, 0))  # Valeur par défaut si hors image
+    return profile 
+
+def perform_color_calibration(image: Image.Image, cell_px_size: int) -> dict[str, tuple[int, int, int]]:
+    # ... code existant ...
+    for i in range(len(expected_ccp_colors)):
+        patch_zone_name = f"{ccp_patch_base_name}{i}"
+        # ... code existant ...
+        avg_r = int(round(sum_r / num_pixels_sampled))
+        avg_g = int(round(sum_g / num_pixels_sampled))
+        avg_b = int(round(sum_b / num_pixels_sampled))
+        sampled_rgb = (avg_r, avg_g, avg_b)
+        print(f"[CALIBRATION] CCP patch {i}: sampled_rgb={sampled_rgb}, expected={theoretical_color_of_this_patch}")
+        # ... existing code ... 

@@ -2,6 +2,8 @@ import numpy as np
 import src.core.protocol_config as pc
 import src.core.matrix_layout as ml
 import src.core.data_processing as dp
+import src.core.image_utils as image_utils
+from PIL import Image
 
 def initialize_bit_matrix():
     """
@@ -71,58 +73,69 @@ def populate_fixed_zones(bit_matrix):
 # --- Fonctions de la Phase 3 et suivantes seraient ajoutées ici ---
 # def encode_message_to_matrix(...)
 
-def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_xor_key_str: str = None) -> list[list[str]]:
+def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_xor_key_str: str = None, ecc_mode: str = 'simple') -> list[list[str]]:
     """
     Orchestre l'encodage complet d'un message texte en une matrice de bits.
-    1. Initialise la matrice de bits.
-    2. Place les motifs fixes.
-    3. Prépare les données (texte -> bits, cryptage, ECC).
-    4. Prépare les métadonnées.
-    5. Place les métadonnées et le payload (données cryptées + ECC) dans la matrice.
-    Retourne la bit_matrix complétée.
+    Ajoute la prise en charge de Reed-Solomon (ecc_mode='rs').
     """
-    # 1. Initialiser bit_matrix
     bit_matrix = initialize_bit_matrix()
-
-    # 2. Remplir les zones fixes (FP, TP, CCP)
     populate_fixed_zones(bit_matrix)
-
-    # 3. Obtenir l'ordre de remplissage pour les données et ECC
     data_ecc_fill_order = ml.get_data_ecc_fill_order()
     available_data_ecc_bits = len(data_ecc_fill_order) * pc.BITS_PER_CELL
 
-    # 4. Calculer num_ecc_bits
-    # Doit être un multiple de BITS_PER_CELL (donc pair) et un multiple de 8 (pour calculate_simple_ecc)
-    # Donc, multiple de lcm(2, 8) = 8.
     if not (0 <= ecc_level_percent <= 100):
         raise ValueError("ecc_level_percent must be between 0 and 100.")
-    
-    # Calculer le nombre brut de bits ECC
-    raw_num_ecc_bits = available_data_ecc_bits * (ecc_level_percent / 100.0)
-    
-    # Arrondir au multiple de 8 inférieur ou égal (pour être sûr d'avoir assez de place et de respecter la contrainte ECC)
-    num_ecc_bits = int(raw_num_ecc_bits // 8) * 8
 
-    if num_ecc_bits < 0: num_ecc_bits = 0 # Ne peut pas être négatif
-    # S'assurer qu'on ne demande pas plus de bits ECC que disponibles, moins une marge pour les données
-    min_data_bits_needed = 8 # Au moins 1 octet de données utiles
-    if num_ecc_bits > available_data_ecc_bits - min_data_bits_needed :
-        num_ecc_bits = int((available_data_ecc_bits - min_data_bits_needed) // 8) * 8
-        if num_ecc_bits < 0: num_ecc_bits = 0 # Au cas où available_data_ecc_bits est très petit
+    # ECC mode: 'simple' (checksum) ou 'rs' (Reed-Solomon)
+    if ecc_mode not in ('simple', 'rs'):
+        raise ValueError(f"ecc_mode must be 'simple' or 'rs', got {ecc_mode}")
 
-    # 5. Calculer la longueur cible pour les bits du message (avant cryptage)
-    target_message_bit_length = available_data_ecc_bits - num_ecc_bits
-    if target_message_bit_length < 0:
-        raise ValueError(f"Not enough space for message and ECC. Target message bits: {target_message_bit_length}")
+    # 1. Calcul du nombre de bits/symboles ECC
+    if ecc_mode == 'rs':
+        # Reed-Solomon: symboles de 8 bits (octets)
+        total_bits = available_data_ecc_bits
+        total_bytes = total_bits // 8
+        if total_bytes > 255:
+            raise ValueError(f"Trop de place pour RS: {total_bytes} octets (max 255). Réduisez la taille de la matrice ou la zone DATA_ECC.")
+        # Nombre de symboles ECC (octets)
+        num_ecc_symbols = int((total_bytes * ecc_level_percent) // 100)
+        if num_ecc_symbols < 0:
+            num_ecc_symbols = 0
+        # Clamp to [1, total_bytes-1] -> must leave at least one data byte
+        num_ecc_symbols = max(1, min(num_ecc_symbols, total_bytes - 1))
+        num_data_bytes = total_bytes - num_ecc_symbols
+        # Reed-Solomon peut corriger jusqu'à t=num_ecc_symbols/2 erreurs de symboles
+        target_message_bit_length = num_data_bytes * 8
+        # Pour la métadonnée, on encode le nombre de symboles ECC sur ecc_level_code (4 bits, max 15)
+        ecc_code_for_metadata = min(num_ecc_symbols, (2**pc.METADATA_CONFIG['ecc_level_bits'])-1)
+    else:
+        # ECC simple: bits, multiple de 8
+        # Correction : forcer la zone DATA_ECC à être un multiple de 8 bits
+        max_payload_bits = (available_data_ecc_bits // 8) * 8
+        if max_payload_bits != available_data_ecc_bits:
+            # On ne peut pas utiliser les derniers bits, ils seront ignorés
+            pass
+        # Calcul du nombre de bits ECC (multiple de 8, <= max_payload_bits)
+        raw_num_ecc_bits = max_payload_bits * (ecc_level_percent / 100.0)
+        num_ecc_bits = int(raw_num_ecc_bits // 8) * 8
+        if num_ecc_bits < 0:
+            num_ecc_bits = 0
+        min_data_bits_needed = 8
+        if num_ecc_bits > max_payload_bits - min_data_bits_needed:
+            num_ecc_bits = int((max_payload_bits - min_data_bits_needed) // 8) * 8
+            if num_ecc_bits < 0:
+                num_ecc_bits = 0
+        target_message_bit_length = max_payload_bits - num_ecc_bits
+        # S'assurer que target_message_bit_length est un multiple de 8
+        target_message_bit_length = (target_message_bit_length // 8) * 8
+        if target_message_bit_length < 0:
+            raise ValueError(f"Not enough space for message and ECC. Target message bits: {target_message_bit_length}")
+        ecc_code_for_metadata = min(int(ecc_level_percent), (2**pc.METADATA_CONFIG['ecc_level_bits'])-1)
 
-    # 6. Convertir le message texte en bits paddés
+    # Longueur réelle du message original (en bits)
+    message_original_len_bits = len(message_text.encode('utf-8')) * 8
     message_bits = dp.text_to_padded_bits(message_text, target_message_bit_length)
 
-    # 7. Gérer la clé XOR
-    # La clé XOR pour les métadonnées est de pc.METADATA_CONFIG['key_bits']
-    # La clé XOR pour les données peut être la même, ou différente si on le souhaitait.
-    # Pour l'instant, on va supposer que la clé XOR générée/fournie est celle stockée dans les métadonnées.
-    xor_key_for_metadata_and_data: str
     if custom_xor_key_str:
         if len(custom_xor_key_str) != pc.METADATA_CONFIG['key_bits']:
             raise ValueError(f"Custom XOR key length must be {pc.METADATA_CONFIG['key_bits']} bits, got {len(custom_xor_key_str)}.")
@@ -130,104 +143,114 @@ def encode_message_to_matrix(message_text: str, ecc_level_percent: int, custom_x
     else:
         xor_key_for_metadata_and_data = dp.generate_xor_key(pc.METADATA_CONFIG['key_bits'])
 
-    # 8. Crypter les bits du message
     encrypted_message_bits = dp.apply_xor_cipher(message_bits, xor_key_for_metadata_and_data)
-    encrypted_message_len_bits = len(encrypted_message_bits) # Devrait être target_message_bit_length
+    encrypted_message_len_bits = len(encrypted_message_bits)
 
-    # 9. Calculer les bits ECC sur les données cryptées
-    # S'assurer que calculate_simple_ecc peut gérer le cas où num_ecc_bits est 0.
-    # Ma fonction actuelle lève une erreur si num_ecc_bits est 0 ou non multiple de 8.
-    # Si ecc_level_percent est 0, num_ecc_bits sera 0. Il faut gérer ce cas.
-    if num_ecc_bits == 0:
-        ecc_bits = ""
+    # LOG DEBUG ENCODAGE
+    print("[ENCODE] XOR key:", xor_key_for_metadata_and_data)
+    print(f"[ENCODE] Message bits ({len(message_bits)}):", message_bits)
+    print(f"[ENCODE] Encrypted message bits ({len(encrypted_message_bits)}):", encrypted_message_bits)
+
+    # 2. Calcul des bits ECC
+    if ecc_mode == 'rs':
+        # Reed-Solomon: data + ecc = total_bytes*8 bits
+        # On pad les données si besoin
+        data_bits_padded = encrypted_message_bits.ljust(num_data_bytes*8, '0')
+        ecc_bits = dp.calculate_reed_solomon_ecc(data_bits_padded, num_ecc_symbols)
+        payload_stream = data_bits_padded + ecc_bits
+        if len(payload_stream) != total_bytes*8:
+            raise ValueError(f"Payload RS length mismatch: {len(payload_stream)} vs {total_bytes*8}")
+        message_encrypted_len_for_metadata = len(data_bits_padded)
     else:
-        ecc_bits = dp.calculate_simple_ecc(encrypted_message_bits, num_ecc_bits)
-    
-    # 10. Préparer les bits de métadonnées
-    # L'ecc_level_code pour les métadonnées pourrait être le ecc_level_percent lui-même si c'est un code.
-    # Le plan indique: format_metadata_bits(1, ecc_level_percent, len(encrypted_bits), xor_key)
-    # Assumons que ecc_level_percent peut être directement utilisé comme code si < 16 (pour 4 bits)
-    # Ou alors, il faut définir un mappage. Pour l'instant, passons ecc_level_percent.
-    # La fonction format_metadata_bits s'attend à un entier pour ecc_level_code.
-    # On va utiliser ecc_level_percent comme code pour l'instant.
-    # S'assurer qu'il tient sur METADATA_CONFIG['ecc_level_bits']
-    max_ecc_code = (2**pc.METADATA_CONFIG['ecc_level_bits']) - 1
-    ecc_code_for_metadata = min(int(ecc_level_percent), max_ecc_code) # Simple troncature
+        if num_ecc_bits == 0:
+            ecc_bits = ""
+        else:
+            ecc_bits = dp.calculate_simple_ecc(encrypted_message_bits, num_ecc_bits)
+        payload_stream = encrypted_message_bits + ecc_bits
+        if len(payload_stream) != target_message_bit_length + (num_ecc_bits if ecc_mode=='simple' else 0):
+            raise ValueError(
+                f"Payload stream length mismatch. Expected {target_message_bit_length + (num_ecc_bits if ecc_mode=='simple' else 0)}, "
+                f"got {len(payload_stream)} (Encrypted: {len(encrypted_message_bits)}, ECC: {len(ecc_bits)})")
+        message_encrypted_len_for_metadata = len(encrypted_message_bits)
 
+    print(f"[ENCODE] ECC bits ({len(ecc_bits)}):", ecc_bits)
+    print(f"[ENCODE] Payload stream ({len(payload_stream)}):", payload_stream)
+
+    # Correction : padder le payload_stream pour remplir exactement la zone DATA_ECC
+    if len(payload_stream) < max_payload_bits:
+        payload_stream = payload_stream.ljust(max_payload_bits, '0')
+    elif len(payload_stream) > max_payload_bits:
+        raise ValueError(f"Payload stream trop long ({len(payload_stream)}) pour la zone DATA_ECC ({max_payload_bits})")
+
+    # 3. Préparer les métadonnées
     metadata_stream = dp.format_metadata_bits(
-        protocol_version=1, # Version du protocole
-        ecc_level_code=ecc_code_for_metadata, 
-        message_encrypted_len=encrypted_message_len_bits,
-        xor_key_actual_bits=xor_key_for_metadata_and_data
+        protocol_version=1,
+        ecc_level_code=ecc_code_for_metadata,
+        message_encrypted_len=message_encrypted_len_for_metadata,
+        xor_key_actual_bits=xor_key_for_metadata_and_data,
+        message_original_len_bits=message_original_len_bits
     )
-    
-    # 11. Placer metadata_stream dans les cellules METADATA de bit_matrix
-    # Il faut un ordre de remplissage pour les métadonnées.
-    # Utilisons un simple balayage ligne par ligne dans la zone METADATA_AREA.
+
+    # 4. Placer les métadonnées dans la matrice
     md_coords = ml.get_zone_coordinates('METADATA_AREA')
     md_r_start, md_r_end, md_c_start, md_c_end = md_coords
-    
     current_bit_index_metadata = 0
     for r in range(md_r_start, md_r_end + 1):
         for c in range(md_c_start, md_c_end + 1):
-            # Vérifier si la cellule est bien de type METADATA_AREA (au cas où la définition de zone serait complexe)
-            # Normalement, toutes les cellules dans ces boucles le sont.
             if ml.get_cell_zone_type(r,c) == 'METADATA_AREA':
-                if current_bit_index_metadata < len(metadata_stream):
-                    bits_to_place = metadata_stream[current_bit_index_metadata : current_bit_index_metadata + pc.BITS_PER_CELL]
-                    if len(bits_to_place) == pc.BITS_PER_CELL:
-                         bit_matrix[r][c] = bits_to_place
-                    else: # Fin du stream, ne remplit pas une cellule entière (ne devrait pas arriver si total_bits est multiple de BITS_PER_CELL)
-                        # print(f"Warning: Trailing metadata bits not filling a full cell at ({r},{c}). Bits: {bits_to_place}")
-                        # On pourrait padder ici ou lever une erreur si METADATA_CONFIG est mal alignée.
-                        # Pour l'instant, on s'attend à un alignement parfait.
-                        if bits_to_place: # S'il reste des bits
-                             raise ValueError(f"Metadata stream length not a multiple of BITS_PER_CELL. Remainder: {bits_to_place}")
-                    current_bit_index_metadata += pc.BITS_PER_CELL
-                # else: # Plus de bits de métadonnées à placer (normal)
-    
+                if current_bit_index_metadata >= len(metadata_stream):
+                    continue
+
+                bits_to_place = metadata_stream[
+                    current_bit_index_metadata : current_bit_index_metadata + pc.BITS_PER_CELL
+                ]
+
+                if len(bits_to_place) != pc.BITS_PER_CELL:
+                    raise ValueError(
+                        "Metadata stream length not a multiple of BITS_PER_CELL. "
+                        f"Remainder: {bits_to_place}"
+                    )
+
+                bit_matrix[r][c] = bits_to_place
+                current_bit_index_metadata += pc.BITS_PER_CELL
     if current_bit_index_metadata != len(metadata_stream):
         raise ValueError(f"Metadata stream not fully placed. Expected {len(metadata_stream)} bits, placed {current_bit_index_metadata}.")
 
-    # 12. Concaténer payload_stream = encrypted_message_bits + ecc_bits
-    payload_stream = encrypted_message_bits + ecc_bits
-    if len(payload_stream) != target_message_bit_length + num_ecc_bits: # target_message_bit_length = len(encrypted_message_bits)
-         raise ValueError(\
-            f"Payload stream length mismatch. Expected {target_message_bit_length + num_ecc_bits}, " \
-            f"got {len(payload_stream)} (Encrypted: {len(encrypted_message_bits)}, ECC: {len(ecc_bits)})")
-
-
-    # 13. Remplir les cellules DATA_ECC de bit_matrix avec payload_stream
+    # 5. Placer le payload (data+ecc) dans la matrice
     current_bit_index_payload = 0
     for r_coord, c_coord in data_ecc_fill_order:
         if current_bit_index_payload < len(payload_stream):
             bits_to_place = payload_stream[current_bit_index_payload : current_bit_index_payload + pc.BITS_PER_CELL]
             if len(bits_to_place) == pc.BITS_PER_CELL:
                 bit_matrix[r_coord][c_coord] = bits_to_place
-            else: # Fin du payload_stream, ne remplit pas une cellule entière
-                  # Cela ne devrait pas arriver si available_data_ecc_bits était correct
-                  # et que payload_stream correspond à cette longueur.
+            else:
                 if bits_to_place:
                     raise ValueError(f"Payload stream length not a multiple of BITS_PER_CELL for DATA_ECC. Remainder: {bits_to_place}")
             current_bit_index_payload += pc.BITS_PER_CELL
-        # else: # Plus de bits de payload à placer (peut arriver si payload plus court que l'espace dispo)
-              # Ce cas est géré par text_to_padded_bits et le calcul de num_ecc_bits
-              # qui s'assurent que le payload utilise tout l'espace disponible.
-
     if current_bit_index_payload != len(payload_stream):
         raise ValueError(f"Payload stream not fully placed in DATA_ECC area. Expected {len(payload_stream)} bits, placed {current_bit_index_payload}.")
-    
-    if len(payload_stream) != available_data_ecc_bits:
-        # This is a critical check. The payload (encrypted data + ECC) MUST exactly fill the available DATA_ECC space.
-        # Our calculations for target_message_bit_length and num_ecc_bits are designed to ensure this.
+    if len(payload_stream) != max_payload_bits:
         raise ValueError(
             f"Final payload stream length ({len(payload_stream)}) does not match "
+            f"max_payload_bits ({max_payload_bits}). This indicates an issue "
             f"available_data_ecc_bits ({available_data_ecc_bits}). This indicates an issue "
-            f"in calculating message/ECC bit lengths."
-        )
-
-    # 14. Retourner la bit_matrix complétée
+            f"in calculating message/ECC bit lengths.")
+    # Correction : remplir les cellules DATA_ECC restantes avec '00' si besoin
+    for r, c in data_ecc_fill_order:
+        if bit_matrix[r][c] is None:
+            bit_matrix[r][c] = '00'
     return bit_matrix
 
 # --- Fonctions de la Phase 3 et suivantes seraient ajoutées ici ---
 # def encode_message_to_matrix(...) 
+
+# Patch utilitaire pour forcer la quiet zone lors de la génération d'image
+def create_protocol_image_with_forced_quiet_zone(bit_matrix, cell_pixel_size, output_filename, margin_px=None):
+    if margin_px is None:
+        margin_px = cell_pixel_size * 4
+    else:
+        # Forcer la marge à être un multiple de cell_pixel_size
+        margin_px = ((margin_px + cell_pixel_size - 1) // cell_pixel_size) * cell_pixel_size
+    image_utils.create_protocol_image(bit_matrix, cell_pixel_size, output_filename, margin_px=margin_px)
+    img = Image.open(output_filename)
+    print(f"[DEBUG] Image generated size: {img.size}, margin_px: {margin_px}") 
